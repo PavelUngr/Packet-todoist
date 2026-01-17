@@ -1,25 +1,31 @@
-# Zásilkovna → Todoist
+# Zásilkovna & PPL → Todoist
 
-Google Apps Script that automatically creates Todoist tasks from Zásilkovna (Czech parcel delivery service) emails.
+Google Apps Script that automatically creates Todoist tasks from Zásilkovna and PPL (Czech parcel delivery services) emails.
 
 *[Česká verze níže](#česká-verze)*
 
 ---
 
+## Supported carriers
+
+- **Zásilkovna** (Packeta) - parcel pickup points
+- **PPL** - parcel pickup points (ParcelShop)
+
 ## What it does
 
-When you receive an email from Zásilkovna notifying that your parcel is ready for pickup, the script:
+When you receive an email notifying that your parcel is ready for pickup, the script:
 
 1. Extracts from the email:
    - Sender (e-shop name)
    - Pickup location
    - Pickup deadline
    - Tracking number
+   - PIN code (PPL only)
 
 2. Creates a Todoist task:
-   - **Title:** `📦 Zásilkovna k vyzvednutí od [sender] v [location] (do [deadline])`
+   - **Title:** `📦 [Carrier] k vyzvednutí od [sender] v [location] (do [deadline])`
    - **Due date:** Day when email arrived
-   - **Description:** Pickup deadline, tracking number, link to email
+   - **Description:** Pickup deadline, tracking number, PIN (if available), link to email
 
 ## Installation
 
@@ -52,7 +58,7 @@ curl -X GET "https://api.todoist.com/rest/v2/projects" \
 
 ### 3. Grant permissions
 
-1. Run `testParsing` function
+1. Run `testZasilkovna` or `testPPL` function
 2. Google will ask for Gmail access - allow everything
 3. On "Google hasn't verified this app" warning, click "Advanced" → "Go to project"
 
@@ -72,11 +78,20 @@ The script will run every 15 minutes.
 
 | Function | Description |
 |----------|-------------|
-| `processZasilkovnaEmails` | Main function - processes new emails |
+| `processAllCarriers` | Main function - processes new emails from all carriers |
 | `markAllAsProcessed` | Marks all existing emails as processed |
 | `setupTrigger` | Sets up automatic trigger (every 15 min) |
-| `testParsing` | Test email parsing |
-| `debugSearchQuery` | Diagnostics - check Gmail query |
+| `testZasilkovna` | Test Zásilkovna email parsing |
+| `testPPL` | Test PPL email parsing |
+| `debugSearchQuery` | Diagnostics - check Gmail query for all carriers |
+
+## Adding new carriers
+
+The script is designed to be easily extensible. To add a new carrier:
+
+1. Add configuration to `CARRIERS` object
+2. Create parser function for the email format
+3. Run `markAllAsProcessed` to prevent duplicate tasks
 
 ## Requirements
 
@@ -91,22 +106,28 @@ MIT
 
 # Česká verze
 
-Google Apps Script, který automaticky vytváří úkoly v Todoist z e-mailů od Zásilkovny.
+Google Apps Script, který automaticky vytváří úkoly v Todoist z e-mailů od Zásilkovny a PPL.
+
+## Podporovaní dopravci
+
+- **Zásilkovna** (Packeta) - výdejní místa
+- **PPL** - výdejní místa (ParcelShop)
 
 ## Co skript dělá
 
-Když ti přijde e-mail od Zásilkovny s oznámením, že je zásilka připravena k vyzvednutí, skript:
+Když ti přijde e-mail s oznámením, že je zásilka připravena k vyzvednutí, skript:
 
 1. Extrahuje z e-mailu:
    - Odesílatele (e-shop)
    - Místo vyzvednutí
    - Termín vyzvednutí
    - Číslo zásilky
+   - PIN kód (pouze PPL)
 
 2. Vytvoří úkol v Todoist:
-   - **Název:** `📦 Zásilkovna k vyzvednutí od [odesílatel] v [místo] (do [termín])`
+   - **Název:** `📦 [Dopravce] k vyzvednutí od [odesílatel] v [místo] (do [termín])`
    - **Termín:** Den kdy přišel e-mail
-   - **Popis:** Termín vyzvednutí, číslo zásilky, odkaz na e-mail
+   - **Popis:** Termín vyzvednutí, číslo zásilky, PIN (pokud je k dispozici), odkaz na e-mail
 
 ## Instalace
 
@@ -139,7 +160,7 @@ curl -X GET "https://api.todoist.com/rest/v2/projects" \
 
 ### 3. Povol přístup
 
-1. Spusť funkci `testParsing`
+1. Spusť funkci `testZasilkovna` nebo `testPPL`
 2. Google tě požádá o povolení přístupu k Gmailu - povol vše
 3. Při varování "Google tuto aplikaci neověřil" klikni na "Rozšířené možnosti" → "Přejít do projektu"
 
@@ -159,11 +180,20 @@ Skript se bude spouštět každých 15 minut.
 
 | Funkce | Popis |
 |--------|-------|
-| `processZasilkovnaEmails` | Hlavní funkce - zpracuje nové e-maily |
+| `processAllCarriers` | Hlavní funkce - zpracuje nové e-maily od všech dopravců |
 | `markAllAsProcessed` | Označí všechny existující e-maily jako zpracované |
 | `setupTrigger` | Nastaví automatické spouštění každých 15 minut |
-| `testParsing` | Test parsování e-mailu |
-| `debugSearchQuery` | Diagnostika - kontrola Gmail query |
+| `testZasilkovna` | Test parsování e-mailu Zásilkovny |
+| `testPPL` | Test parsování e-mailu PPL |
+| `debugSearchQuery` | Diagnostika - kontrola Gmail query pro všechny dopravce |
+
+## Přidání dalších dopravců
+
+Skript je navržen pro snadné rozšíření. Pro přidání nového dopravce:
+
+1. Přidej konfiguraci do objektu `CARRIERS`
+2. Vytvoř parser funkci pro formát e-mailu
+3. Spusť `markAllAsProcessed` pro prevenci duplicitních úkolů
 
 ## Požadavky
 
