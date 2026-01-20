@@ -8,7 +8,7 @@ Google Apps Script that automatically creates Todoist tasks from Zásilkovna and
 
 ## Supported carriers
 
-- **Zásilkovna** (Packeta) - parcel pickup points
+- **Zásilkovna** (Packeta) - pickup points and Z-BOX parcel lockers
 - **PPL** - parcel pickup points (ParcelShop)
 
 ## What it does
@@ -20,12 +20,18 @@ When you receive an email notifying that your parcel is ready for pickup, the sc
    - Pickup location
    - Pickup deadline
    - Tracking number
-   - PIN code (PPL only)
+   - PIN code (Z-BOX and PPL)
+   - GPS coordinates (from map links)
 
 2. Creates a Todoist task:
    - **Title:** `📦 [Carrier] k vyzvednutí od [sender] v [location] (do [deadline])`
    - **Due date:** Day when email arrived
-   - **Description:** Pickup deadline, tracking number, PIN (if available), link to email
+   - **Description:**
+     - Pickup deadline
+     - Tracking number
+     - PIN (if available)
+     - Link to original email
+     - Google Maps navigation link
 
 ## Installation
 
@@ -110,7 +116,7 @@ Google Apps Script, který automaticky vytváří úkoly v Todoist z e-mailů od
 
 ## Podporovaní dopravci
 
-- **Zásilkovna** (Packeta) - výdejní místa
+- **Zásilkovna** (Packeta) - výdejní místa i Z-BOX boxy
 - **PPL** - výdejní místa (ParcelShop)
 
 ## Co skript dělá
@@ -122,12 +128,18 @@ Když ti přijde e-mail s oznámením, že je zásilka připravena k vyzvednutí
    - Místo vyzvednutí
    - Termín vyzvednutí
    - Číslo zásilky
-   - PIN kód (pouze PPL)
+   - PIN kód (Z-BOX a PPL)
+   - GPS souřadnice (z odkazů na mapu)
 
 2. Vytvoří úkol v Todoist:
    - **Název:** `📦 [Dopravce] k vyzvednutí od [odesílatel] v [místo] (do [termín])`
    - **Termín:** Den kdy přišel e-mail
-   - **Popis:** Termín vyzvednutí, číslo zásilky, PIN (pokud je k dispozici), odkaz na e-mail
+   - **Popis:**
+     - Termín vyzvednutí
+     - Číslo zásilky
+     - PIN (pokud je k dispozici)
+     - Odkaz na původní e-mail
+     - Odkaz na Google Maps pro navigaci
 
 ## Instalace
 
