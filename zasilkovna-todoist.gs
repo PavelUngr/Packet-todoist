@@ -122,27 +122,91 @@ function processCarrierEmails(carrierId, carrier) {
 }
 
 /**
- * Parses Zásilkovna email and extracts required data
+ * Parses Zásilkovna email (pickup point and Z-BOX)
  */
 function parseZasilkovnaEmail(message) {
   const body = message.getPlainBody();
+  let htmlBody = '';
+  try {
+    htmlBody = message.getBody();
+  } catch (e) {
+    htmlBody = body;
+  }
 
-  // Extract sender (e.g. "WITTCHEN S.A.")
-  const senderMatch = body.match(/od odesilatele\s+([^\s].*?)\s+je pro vás/i);
-  const sender = senderMatch ? senderMatch[1].trim() : 'Unknown sender';
+  // Detect email type (Z-BOX vs pickup point)
+  const isZBox = body.includes('Z-BOX') || body.includes('dorazila do Z-BOXu');
 
-  // Extract pickup location (e.g. "Praha 4, Nusle, Na Pankráci 1618/30 (Don Pealo)")
-  const locationMatch = body.match(/na výdejním místě\s+(.+?)(?:\.\s*$|\.\s*\n)/im);
-  const location = locationMatch ? locationMatch[1].trim() : 'Unknown location';
+  // Extract sender
+  let sender = 'Unknown sender';
+  if (isZBox) {
+    // Z-BOX format: "od Yanwen Logistics Co., Ltd. Shanghai Branch právě dorazila"
+    const zboxSenderMatch = body.match(/od\s+(.+?)\s+práv/i) ||
+                            htmlBody.match(/od\s+<[^>]*>([^<]+)<\/span>\s+<[^>]*>práv/i);
+    if (zboxSenderMatch) {
+      sender = zboxSenderMatch[1].trim();
+    }
+  } else {
+    // Classic format: "od odesilatele WITTCHEN S.A. je pro vás"
+    const senderMatch = body.match(/od odesilatele\s+([^\s].*?)\s+je pro vás/i);
+    if (senderMatch) {
+      sender = senderMatch[1].trim();
+    }
+  }
 
-  // Extract pickup deadline (e.g. "16. ledna")
-  const dateMatch = body.match(/nejpozději dne\s+(\d{1,2}\.\s*\w+)/i);
-  const dueDateText = dateMatch ? dateMatch[1].trim() : null;
-  const dueDate = parseCzechDate(dueDateText);
+  // Extract pickup location
+  let location = 'Unknown location';
+  if (isZBox) {
+    // Z-BOX: search for "Z-BOX Praha 4, Krč, Antala Staška 1071/57a"
+    const zboxLocationMatch = htmlBody.match(/>Z-BOX\s+([^<]+)</i) ||
+                              body.match(/Z-BOX\s+([^\n]+)/i);
+    if (zboxLocationMatch) {
+      location = 'Z-BOX ' + zboxLocationMatch[1].trim();
+    }
+  } else {
+    // Classic format: "na výdejním místě Praha 4, Nusle..."
+    const locationMatch = body.match(/na výdejním místě\s+(.+?)(?:\.\s*$|\.\s*\n)/im);
+    if (locationMatch) {
+      location = locationMatch[1].trim();
+    }
+  }
+
+  // Extract pickup deadline
+  let dueDate = null;
+  // Z-BOX format: "K vyzvednutí do 22.1.2026" (numeric)
+  const numericDateMatch = body.match(/K vyzvednut[ií] do\s*(\d{1,2}\.\d{1,2}\.\d{4})/i) ||
+                           htmlBody.match(/K vyzvednut[ií] do\s*(\d{1,2}\.\d{1,2}\.\d{4})/i);
+  if (numericDateMatch) {
+    dueDate = parseNumericDate(numericDateMatch[1]);
+  } else {
+    // Classic format: "nejpozději dne 16. ledna" (text)
+    const dateMatch = body.match(/nejpozději dne\s+(\d{1,2}\.\s*\w+)/i);
+    if (dateMatch) {
+      dueDate = parseCzechDate(dateMatch[1].trim());
+    }
+  }
 
   // Extract tracking number
-  const trackingMatch = body.match(/zásilka číslo\s+(Z\s*[\d\s]+)/i);
-  const trackingNumber = trackingMatch ? trackingMatch[1].replace(/\s/g, ' ').trim() : '';
+  const trackingMatch = body.match(/zásilka číslo\s+(Z\s*[\d\s]+)/i) ||
+                        body.match(/Číslo zásilky\s+(Z\s*[\d\s]+)/i) ||
+                        htmlBody.match(/Číslo zásilky[^Z]+(Z\s*[\d\s]+)/i);
+  const trackingNumber = trackingMatch ? trackingMatch[1].replace(/\s+/g, ' ').trim() : '';
+
+  // Extract PIN/code for Z-BOX (displayed as individual digits in table)
+  let pin = '';
+  if (isZBox) {
+    // HTML: search for digits in table cells with code
+    const pinDigits = htmlBody.match(/text-align:\s*center;?">\s*(\d)\s*<\/td>/g);
+    if (pinDigits && pinDigits.length >= 4) {
+      pin = pinDigits.map(d => d.match(/>\s*(\d)\s*</)[1]).join('');
+    }
+    // Alternative from plain text - digits separated by whitespace
+    if (!pin) {
+      const plainPinMatch = body.match(/kódu:\s*\n[\s\S]*?(\d)\s+(\d)\s+(\d)\s+(\d)\s+(\d)\s+(\d)/);
+      if (plainPinMatch) {
+        pin = plainPinMatch.slice(1, 7).join('');
+      }
+    }
+  }
 
   // Create Gmail link
   const messageId = message.getId();
@@ -157,6 +221,7 @@ function parseZasilkovnaEmail(message) {
     address: location,
     dueDate: dueDate,
     trackingNumber: trackingNumber,
+    pin: pin,
     gmailLink: gmailLink,
     emailDate: emailDateFormatted
   };
@@ -433,7 +498,7 @@ function markAllAsProcessed() {
 }
 
 /**
- * Test function for Zásilkovna - run manually to verify parsing
+ * Test function for Zásilkovna pickup point - run manually to verify parsing
  */
 function testZasilkovna() {
   const testBody = `Dobrý den,
@@ -453,7 +518,56 @@ Zásilku si můžete vyzvednout nejpozději dne 16. ledna.`;
   };
 
   const result = parseZasilkovnaEmail(mockMessage);
-  Logger.log('Zásilkovna - Parsing result:');
+  Logger.log('Zásilkovna (pickup point) - Parsing result:');
+  Logger.log(JSON.stringify(result, null, 2));
+}
+
+/**
+ * Test function for Zásilkovna Z-BOX - run manually to verify parsing
+ */
+function testZasilkovnaZBox() {
+  const testBody = `Číslo zásilky Z 285 9816 736
+
+Zdravíme ze Zásilkovny,
+
+vezeme skvělé zprávy! Vaše zásilka od Yanwen Logistics Co., Ltd. Shanghai Branch právě dorazila do Z-BOXu.
+
+Zásilku vyzvednete pomocí mobilní aplikace nebo kódu:
+
+  5   2   7   7   1   8
+
+A teď hurá k Z-BOXu:
+
+Pavel Ungr
+Z-BOX Praha 4, Krč, Antala Staška 1071/57a
+Antala Staška 1071/57a 140 00 Praha
+Po–Ne 00:00–23:59
+K vyzvednutí do 22.1.2026 23:59`;
+
+  const testHtml = `
+    <span style="color: #202020; font-weight: 500;">Yanwen Logistics Co., Ltd. Shanghai Branch</span>
+    <span style="color: #202020; font-weight: 500;">právě dorazila do Z-BOXu</span>
+    <td style="text-align: center;"> 5 </td>
+    <td style="text-align: center;"> 2 </td>
+    <td style="text-align: center;"> 7 </td>
+    <td style="text-align: center;"> 7 </td>
+    <td style="text-align: center;"> 1 </td>
+    <td style="text-align: center;"> 8 </td>
+    <span style="font-size: 16px; font-weight: 500;">Z-BOX Praha 4, Krč, Antala Staška 1071/57a</span>
+    K vyzvednutí do 22.1.2026
+    Číslo zásilky Z 285 9816 736
+  `;
+
+  const mockMessage = {
+    getPlainBody: () => testBody,
+    getBody: () => testHtml,
+    getFrom: () => 'noreply@zasilkovna.cz',
+    getId: () => 'test-zbox-id',
+    getDate: () => new Date()
+  };
+
+  const result = parseZasilkovnaEmail(mockMessage);
+  Logger.log('Zásilkovna (Z-BOX) - Parsing result:');
   Logger.log(JSON.stringify(result, null, 2));
 }
 
