@@ -1,6 +1,6 @@
-# Zásilkovna & PPL → Todoist
+# Zásilkovna & PPL & Balíkovna → Todoist
 
-Google Apps Script that automatically creates Todoist tasks from Zásilkovna and PPL (Czech parcel delivery services) emails.
+Google Apps Script that automatically creates Todoist tasks from Zásilkovna, PPL and Balíkovna (Czech parcel delivery services) emails.
 
 *[Česká verze níže](#česká-verze)*
 
@@ -10,6 +10,7 @@ Google Apps Script that automatically creates Todoist tasks from Zásilkovna and
 
 - **Zásilkovna** (Packeta) - pickup points and Z-BOX parcel lockers
 - **PPL** - parcel pickup points (ParcelShop)
+- **Balíkovna** (Czech Post) - parcel boxes and pickup points
 
 ## What it does
 
@@ -20,7 +21,7 @@ When you receive an email notifying that your parcel is ready for pickup, the sc
    - Pickup location
    - Pickup deadline
    - Tracking number
-   - PIN code (Z-BOX and PPL)
+   - PIN/pickup code (Z-BOX, PPL, Balíkovna)
    - GPS coordinates (from map links)
 
 2. Creates a Todoist task:
@@ -64,7 +65,7 @@ curl -X GET "https://api.todoist.com/rest/v2/projects" \
 
 ### 3. Grant permissions
 
-1. Run `testZasilkovna` or `testPPL` function
+1. Run `testZasilkovna`, `testPPL` or `testBalikovna` function
 2. Google will ask for Gmail access - allow everything
 3. On "Google hasn't verified this app" warning, click "Advanced" → "Go to project"
 
@@ -89,6 +90,7 @@ The script will run every 15 minutes.
 | `setupTrigger` | Sets up automatic trigger (every 15 min) |
 | `testZasilkovna` | Test Zásilkovna email parsing |
 | `testPPL` | Test PPL email parsing |
+| `testBalikovna` | Test Balíkovna email parsing |
 | `debugSearchQuery` | Diagnostics - check Gmail query for all carriers |
 
 ## Adding new carriers
@@ -112,12 +114,13 @@ MIT
 
 # Česká verze
 
-Google Apps Script, který automaticky vytváří úkoly v Todoist z e-mailů od Zásilkovny a PPL.
+Google Apps Script, který automaticky vytváří úkoly v Todoist z e-mailů od Zásilkovny, PPL a Balíkovny.
 
 ## Podporovaní dopravci
 
 - **Zásilkovna** (Packeta) - výdejní místa i Z-BOX boxy
 - **PPL** - výdejní místa (ParcelShop)
+- **Balíkovna** (Česká pošta) - boxy a výdejní místa
 
 ## Co skript dělá
 
@@ -128,7 +131,7 @@ Když ti přijde e-mail s oznámením, že je zásilka připravena k vyzvednutí
    - Místo vyzvednutí
    - Termín vyzvednutí
    - Číslo zásilky
-   - PIN kód (Z-BOX a PPL)
+   - PIN/kód pro vyzvednutí (Z-BOX, PPL, Balíkovna)
    - GPS souřadnice (z odkazů na mapu)
 
 2. Vytvoří úkol v Todoist:
@@ -172,7 +175,7 @@ curl -X GET "https://api.todoist.com/rest/v2/projects" \
 
 ### 3. Povol přístup
 
-1. Spusť funkci `testZasilkovna` nebo `testPPL`
+1. Spusť funkci `testZasilkovna`, `testPPL` nebo `testBalikovna`
 2. Google tě požádá o povolení přístupu k Gmailu - povol vše
 3. Při varování "Google tuto aplikaci neověřil" klikni na "Rozšířené možnosti" → "Přejít do projektu"
 
@@ -197,6 +200,7 @@ Skript se bude spouštět každých 15 minut.
 | `setupTrigger` | Nastaví automatické spouštění každých 15 minut |
 | `testZasilkovna` | Test parsování e-mailu Zásilkovny |
 | `testPPL` | Test parsování e-mailu PPL |
+| `testBalikovna` | Test parsování e-mailu Balíkovny |
 | `debugSearchQuery` | Diagnostika - kontrola Gmail query pro všechny dopravce |
 
 ## Přidání dalších dopravců

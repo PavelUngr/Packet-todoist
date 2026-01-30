@@ -1,25 +1,26 @@
 /**
- * Zásilkovna & PPL → Todoist
+ * Zásilkovna & PPL & Balíkovna → Todoist
  * Automaticky vytváří úkoly v Todoist z e-mailů od dopravců
  *
  * Podporovaní dopravci:
  * - Zásilkovna (výdejní místa i Z-BOX)
  * - PPL (ParcelShopy)
+ * - Balíkovna (Česká pošta - boxy a výdejní místa)
  *
  * Funkce:
  * - Extrakce odesílatele, adresy, termínu vyzvednutí, čísla zásilky a PIN
  * - GPS souřadnice a odkaz na Google Maps pro navigaci
  * - Odkaz na původní e-mail v Gmailu
  *
- * @version 2.1.0
+ * @version 2.2.0
  * @author Pavel Ungr
  * @see https://github.com/pungr/zasilkovna-todoist
  */
 
 // ============ KONFIGURACE ============
 const CONFIG = {
-  TODOIST_API_TOKEN: 'ab3459c84cde0d920ae7dbbaf6a81a4cca8aa484',
-  TODOIST_PROJECT_ID: '6CrfgCM955JJvgMQ', // Auto TASK projekt
+  TODOIST_API_TOKEN: 'your-todoist-api-token',
+  TODOIST_PROJECT_ID: 'your-project-id',
   GMAIL_LABEL_PROCESSED: 'Parcel-Todoist', // Label pro zpracované e-maily
 };
 
@@ -38,6 +39,13 @@ const CARRIERS = {
     fromQuery: 'from:ppl.cz',
     subjectKeyword: 'čeká',
     parser: parsePPLEmail
+  },
+  balikovna: {
+    name: 'Balíkovna',
+    icon: '📦',
+    fromQuery: 'from:balikovna.cz',
+    subjectKeyword: 'čeká',
+    parser: parseBalikovna
   }
 };
 
@@ -346,6 +354,113 @@ function parsePPLEmail(message) {
 }
 
 /**
+ * Parsuje e-mail od Balíkovny (Česká pošta)
+ */
+function parseBalikovna(message) {
+  const body = message.getPlainBody();
+  let htmlBody = '';
+  try {
+    htmlBody = message.getBody();
+  } catch (e) {
+    htmlBody = body;
+  }
+
+  // Extrahuj odesílatele
+  // HTML: <b>Odesílatel:</b> E.M.P. Merchandising Handelsge<br/>
+  let sender = 'Neznámý odesílatel';
+  const senderMatch = htmlBody.match(/Odes[ií]latel:<\/b>\s*([^<]+)/i) ||
+                      body.match(/Odes[ií]latel:\s*(.+)/i);
+  if (senderMatch) {
+    sender = senderMatch[1].replace(/\s+/g, ' ').trim();
+  }
+
+  // Extrahuj číslo balíku
+  // HTML: <b>Číslo balíku:</b> <a href="...">NB4841298967U</a>
+  let trackingNumber = '';
+  const trackingMatch = htmlBody.match(/[ČC][ií]slo bal[ií]ku:<\/b>\s*<a[^>]*>([^<]+)<\/a>/i) ||
+                        htmlBody.match(/[ČC][ií]slo bal[ií]ku:<\/b>\s*([^<]+)/i) ||
+                        body.match(/[ČC][ií]slo bal[ií]ku:\s*(\S+)/i);
+  if (trackingMatch) {
+    trackingNumber = trackingMatch[1].replace(/\s+/g, ' ').trim();
+  }
+
+  // Extrahuj kód pro vyzvednutí
+  // HTML: <b>Kód pro vyzvednutí: c061d4</b>
+  let pin = '';
+  const pinMatch = htmlBody.match(/K[óo]d pro vyzvednut[ií]:\s*([a-zA-Z0-9]+)/i) ||
+                   body.match(/K[óo]d pro vyzvednut[ií]:\s*([a-zA-Z0-9]+)/i) ||
+                   htmlBody.match(/Pickup code:\s*([a-zA-Z0-9]+)/i);
+  if (pinMatch) {
+    pin = pinMatch[1].trim();
+  }
+
+  // Extrahuj datum vyzvednutí
+  // HTML: <b>Balík uložen:</b> do <span ...>2.&nbsp;2.&nbsp;2026,&nbsp;07:00&nbsp;hod.</span>
+  // Po dekódování &nbsp; → mezera: "2. 2. 2026"
+  let dueDate = null;
+  // Nejprve zkus HTML s &nbsp; entitami
+  const dueDateHtmlMatch = htmlBody.match(/do\s*(?:<[^>]*>)?\s*(\d{1,2})[.\s]*(?:&nbsp;)*\s*(\d{1,2})[.\s]*(?:&nbsp;)*\s*(\d{4})/i);
+  if (dueDateHtmlMatch) {
+    const day = parseInt(dueDateHtmlMatch[1]);
+    const month = parseInt(dueDateHtmlMatch[2]);
+    const year = parseInt(dueDateHtmlMatch[3]);
+    dueDate = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  } else {
+    // Záložní varianta z plain textu
+    const dueDateMatch = body.match(/do\s+(\d{1,2})\.\s*(\d{1,2})\.\s*(\d{4})/i);
+    if (dueDateMatch) {
+      dueDate = parseNumericDate(`${dueDateMatch[1]}.${dueDateMatch[2]}.${dueDateMatch[3]}`);
+    }
+  }
+
+  // Extrahuj adresu pro vyzvednutí
+  // HTML: <b>Adresa pro vyzvednutí:</b> <a href="...">box - Praha 4 AlzaBox Krč...</a>
+  let address = 'Neznámé místo';
+  const addressMatch = htmlBody.match(/Adresa pro vyzvednut[ií]:<\/b>\s*<a[^>]*>([^<]+)<\/a>/i) ||
+                       htmlBody.match(/Adresa pro vyzvednut[ií]:<\/b>\s*([^<]+)/i) ||
+                       htmlBody.match(/Pickup address:<\/b>\s*<a[^>]*>([^<]+)<\/a>/i) ||
+                       body.match(/Adresa pro vyzvednut[ií]:\s*(.+)/i);
+  if (addressMatch) {
+    address = addressMatch[1].replace(/\s+/g, ' ').trim();
+  }
+
+  // GPS souřadnice - Balíkovna nepoužívá mapové odkazy v e-mailu
+  let latitude = null;
+  let longitude = null;
+  const mapyCzMatch = htmlBody.match(/mapy\.com[^"]*[?&]x=([0-9.]+)[^"]*(?:&amp;|&)y=([0-9.]+)/i);
+  if (mapyCzMatch) {
+    longitude = mapyCzMatch[1];
+    latitude = mapyCzMatch[2];
+  } else {
+    const googleMapsMatch = htmlBody.match(/google\.com\/maps[^"]*[?&]q=([0-9.]+),([0-9.]+)/i);
+    if (googleMapsMatch) {
+      latitude = googleMapsMatch[1];
+      longitude = googleMapsMatch[2];
+    }
+  }
+
+  // Odkaz na e-mail v Gmailu
+  const messageId = message.getId();
+  const gmailLink = `https://mail.google.com/mail/u/0/#inbox/${messageId}`;
+
+  // Datum přijetí e-mailu
+  const emailDate = message.getDate();
+  const emailDateFormatted = Utilities.formatDate(emailDate, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+
+  return {
+    sender: sender,
+    address: address,
+    dueDate: dueDate,
+    trackingNumber: trackingNumber,
+    pin: pin,
+    gmailLink: gmailLink,
+    emailDate: emailDateFormatted,
+    latitude: latitude,
+    longitude: longitude
+  };
+}
+
+/**
  * Převede český datum (např. "16. ledna") na ISO formát
  */
 function parseCzechDate(dateText) {
@@ -629,6 +744,42 @@ function testPPL() {
 
   const result = parsePPLEmail(mockMessage);
   Logger.log('PPL - Výsledek parsování:');
+  Logger.log(JSON.stringify(result, null, 2));
+}
+
+/**
+ * Testovací funkce pro Balíkovnu
+ */
+function testBalikovna() {
+  const testHtml = `
+    <p><b>Dobrý den,<br/><br/>už jen do <span style="white-space:nowrap;">2.&nbsp;2.&nbsp;2026</span>,&nbsp;07:00&nbsp;hod. si vyzvedněte svůj balík v&nbsp;boxu.</b></p>
+    <p><b>Kód pro vyzvednutí: c061d4</b></p>
+    <p><b>Druh balíku:</b> Balíkovna<br/>
+    <b>Číslo balíku:</b> <a href="https://www.balikovna.cz/cs/sledovat-balik/balik/NB4841298967U">NB4841298967U</a><br/>
+    <b>Odesílatel:</b> E.M.P. Merchandising Handelsge<br/>
+    <b>Balík uložen:</b> do <span style="white-space:nowrap;">2.&nbsp;2.&nbsp;2026,&nbsp;07:00&nbsp;hod.</span>, poté ho vrátíme odesílateli<br/>
+    <b>Adresa pro vyzvednutí:</b> <a href="https://www.balikovna.cz/cs/vyhledat-balikovnu/psc/14011">box - Praha 4 AlzaBox Krč Antala Staška, Antala Staška 1859/34, Krč, 14000, Praha</a></p>
+  `;
+
+  const testBody = `Dobrý den,
+už jen do 2. 2. 2026, 07:00 hod. si vyzvedněte svůj balík v boxu.
+Kód pro vyzvednutí: c061d4
+Druh balíku: Balíkovna
+Číslo balíku: NB4841298967U
+Odesílatel: E.M.P. Merchandising Handelsge
+Balík uložen: do 2. 2. 2026, 07:00 hod., poté ho vrátíme odesílateli
+Adresa pro vyzvednutí: box - Praha 4 AlzaBox Krč Antala Staška, Antala Staška 1859/34, Krč, 14000, Praha`;
+
+  const mockMessage = {
+    getPlainBody: () => testBody,
+    getBody: () => testHtml,
+    getFrom: () => 'balikovna@balikovna.cz',
+    getId: () => 'test-balikovna-id',
+    getDate: () => new Date()
+  };
+
+  const result = parseBalikovna(mockMessage);
+  Logger.log('Balíkovna - Výsledek parsování:');
   Logger.log(JSON.stringify(result, null, 2));
 }
 
