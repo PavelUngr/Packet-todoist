@@ -26,7 +26,8 @@ When you receive an email notifying that your parcel is ready for pickup, the sc
 
 2. Creates a Todoist task:
    - **Title:** `📦 [Carrier] k vyzvednutí od [sender] v [location] (do [deadline])`
-   - **Due date:** Day when email arrived
+   - **Due date:** Day when email arrived (when to start dealing with pickup)
+   - **Deadline:** Last day to pick up the parcel
    - **Description:**
      - Pickup deadline
      - Tracking number
@@ -59,7 +60,7 @@ const CONFIG = {
 
 **How to get Project ID:**
 ```bash
-curl -X GET "https://api.todoist.com/rest/v2/projects" \
+curl -X GET "https://api.todoist.com/api/v1/projects" \
   -H "Authorization: Bearer YOUR_API_TOKEN"
 ```
 
@@ -81,6 +82,12 @@ To prevent creating tasks from old emails:
 
 The script will run every 15 minutes.
 
+## Multi-account support
+
+The script works on any Gmail account. You can install it on multiple Google accounts and they will all create tasks in the same Todoist project (as long as they share the same API token and project ID).
+
+Gmail links in task descriptions use `Session.getActiveUser().getEmail()` instead of hardcoded account index, so they work correctly regardless of which account the script runs on.
+
 ## Functions
 
 | Function | Description |
@@ -88,10 +95,11 @@ The script will run every 15 minutes.
 | `processAllCarriers` | Main function - processes new emails from all carriers |
 | `markAllAsProcessed` | Marks all existing emails as processed |
 | `setupTrigger` | Sets up automatic trigger (every 15 min) |
+| `clearProcessedIds` | Clears stored processed message IDs (useful after fixing issues) |
+| `debugSearch` | Diagnostics - check Gmail search queries for all carriers |
 | `testZasilkovna` | Test Zásilkovna email parsing |
 | `testPPL` | Test PPL email parsing |
 | `testBalikovna` | Test Balíkovna email parsing |
-| `debugSearchQuery` | Diagnostics - check Gmail query for all carriers |
 
 ## Adding new carriers
 
@@ -105,6 +113,26 @@ The script is designed to be easily extensible. To add a new carrier:
 
 - Google account with Gmail
 - Todoist account (free version works)
+- Todoist API v1 (`api.todoist.com/api/v1/`)
+
+## Changelog
+
+### v2.3.0
+- **Fix:** Label was added even when Todoist API failed, causing emails to be silently skipped on retry
+- **Migration:** Todoist REST API v2 → API v1 (v2 is deprecated)
+- **New:** Deadline field - last pickup date set as task deadline (separate from due date)
+- **New:** Dynamic Gmail links using `Session.getActiveUser()` for multi-account support
+- **New:** `clearProcessedIds()` utility function
+- **Improved:** Error handling accepts any 2xx status code, logs message ID
+
+### v2.2.0
+- Added Balíkovna (Czech Post) carrier support
+- Added GPS navigation links
+- Improved multiline parsing
+
+### v2.1.0
+- Added Z-BOX support for Zásilkovna
+- Added PPL carrier support
 
 ## License
 
@@ -136,7 +164,8 @@ Když ti přijde e-mail s oznámením, že je zásilka připravena k vyzvednutí
 
 2. Vytvoří úkol v Todoist:
    - **Název:** `📦 [Dopravce] k vyzvednutí od [odesílatel] v [místo] (do [termín])`
-   - **Termín:** Den kdy přišel e-mail
+   - **Termín realizace (due date):** Den kdy přišel e-mail (kdy začít řešit vyzvednutí)
+   - **Termín dokončení (deadline):** Poslední den k vyzvednutí zásilky
    - **Popis:**
      - Termín vyzvednutí
      - Číslo zásilky
@@ -169,7 +198,7 @@ const CONFIG = {
 
 **Jak získat Project ID:**
 ```bash
-curl -X GET "https://api.todoist.com/rest/v2/projects" \
+curl -X GET "https://api.todoist.com/api/v1/projects" \
   -H "Authorization: Bearer TVUJ_API_TOKEN"
 ```
 
@@ -191,6 +220,12 @@ Aby se nevytvářely úkoly ze starých e-mailů:
 
 Skript se bude spouštět každých 15 minut.
 
+## Podpora více účtů
+
+Skript funguje na jakémkoli Gmail účtu. Můžete ho nainstalovat na více Google účtů a všechny budou vytvářet úkoly do stejného Todoist projektu (pokud sdílí stejný API token a project ID).
+
+Odkazy na e-maily v popisu úkolu používají `Session.getActiveUser().getEmail()` místo pevně zadaného indexu účtu, takže fungují správně bez ohledu na to, na kterém účtu skript běží.
+
 ## Funkce
 
 | Funkce | Popis |
@@ -198,10 +233,11 @@ Skript se bude spouštět každých 15 minut.
 | `processAllCarriers` | Hlavní funkce - zpracuje nové e-maily od všech dopravců |
 | `markAllAsProcessed` | Označí všechny existující e-maily jako zpracované |
 | `setupTrigger` | Nastaví automatické spouštění každých 15 minut |
+| `clearProcessedIds` | Vymaže uložená ID zpracovaných zpráv (užitečné po opravě problémů) |
+| `debugSearch` | Diagnostika - kontrola Gmail search queries pro všechny dopravce |
 | `testZasilkovna` | Test parsování e-mailu Zásilkovny |
 | `testPPL` | Test parsování e-mailu PPL |
 | `testBalikovna` | Test parsování e-mailu Balíkovny |
-| `debugSearchQuery` | Diagnostika - kontrola Gmail query pro všechny dopravce |
 
 ## Přidání dalších dopravců
 
@@ -215,6 +251,7 @@ Skript je navržen pro snadné rozšíření. Pro přidání nového dopravce:
 
 - Google účet s Gmailem
 - Todoist účet (stačí free verze)
+- Todoist API v1 (`api.todoist.com/api/v1/`)
 
 ## Licence
 
