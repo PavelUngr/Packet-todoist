@@ -12,7 +12,7 @@
  * - GPS souřadnice a odkaz na Google Maps pro navigaci
  * - Odkaz na původní e-mail v Gmailu
  *
- * @version 2.2.0
+ * @version 2.3.0
  * @author Pavel Ungr
  * @see https://github.com/pungr/zasilkovna-todoist
  */
@@ -91,6 +91,7 @@ function processCarrierEmails(carrierId, carrier) {
 
   for (const thread of threads) {
     const messages = thread.getMessages();
+    let threadFullyProcessed = true;
 
     for (const message of messages) {
       const messageId = message.getId();
@@ -118,13 +119,18 @@ function processCarrierEmails(carrierId, carrier) {
           processedIds.push(messageId);
 
         } catch (error) {
-          Logger.log(`${carrier.name}: Chyba při zpracování e-mailu: ${error.message}`);
+          Logger.log(`${carrier.name}: Chyba při zpracování e-mailu ${messageId}: ${error.message}`);
+          threadFullyProcessed = false;
         }
       }
     }
 
-    // Označ vlákno labelem
-    thread.addLabel(label);
+    // Označ vlákno labelem POUZE pokud byly všechny zprávy úspěšně zpracovány
+    if (threadFullyProcessed) {
+      thread.addLabel(label);
+    } else {
+      Logger.log(`${carrier.name}: Vlákno neolabelováno - některé zprávy se nepodařilo zpracovat, zkusí se znovu.`);
+    }
   }
 
   // Ulož aktualizovaný seznam zpracovaných ID (ponechej jen posledních 500)
@@ -244,9 +250,10 @@ function parseZasilkovnaEmail(message) {
     }
   }
 
-  // Vytvoř odkaz na e-mail v Gmailu
+  // Vytvoř odkaz na e-mail v Gmailu (bez hardcoded u/0 – funguje na jakémkoli účtu)
   const messageId = message.getId();
-  const gmailLink = `https://mail.google.com/mail/u/0/#inbox/${messageId}`;
+  const userEmail = Session.getActiveUser().getEmail();
+  const gmailLink = `https://mail.google.com/mail/u/${userEmail}/#inbox/${messageId}`;
 
   // Datum přijetí e-mailu
   const emailDate = message.getDate();
@@ -336,7 +343,7 @@ function parsePPLEmail(message) {
 
   // Vytvoř odkaz na e-mail v Gmailu
   const messageId = message.getId();
-  const gmailLink = `https://mail.google.com/mail/u/0/#inbox/${messageId}`;
+  const gmailLink = `https://mail.google.com/mail/u/${Session.getActiveUser().getEmail()}/#inbox/${messageId}`;
 
   // Datum přijetí e-mailu
   const emailDate = message.getDate();
@@ -441,7 +448,7 @@ function parseBalikovna(message) {
 
   // Odkaz na e-mail v Gmailu
   const messageId = message.getId();
-  const gmailLink = `https://mail.google.com/mail/u/0/#inbox/${messageId}`;
+  const gmailLink = `https://mail.google.com/mail/u/${Session.getActiveUser().getEmail()}/#inbox/${messageId}`;
 
   // Datum přijetí e-mailu
   const emailDate = message.getDate();
@@ -547,9 +554,14 @@ function createTodoistTask(emailData) {
     priority: 3 // Střední priorita
   };
 
-  // Due date = den kdy přišel e-mail
+  // Due date = den kdy přišel e-mail (kdy začít řešit)
   if (emailData.emailDate) {
     payload.due_date = emailData.emailDate;
+  }
+
+  // Deadline = poslední den k vyzvednutí (kdy musí být hotovo)
+  if (emailData.dueDate) {
+    payload.deadline = { date: emailData.dueDate };
   }
 
   // Popis s termínem vyzvednutí, číslem zásilky a odkazem
@@ -586,10 +598,11 @@ function createTodoistTask(emailData) {
     muteHttpExceptions: true
   };
 
-  const response = UrlFetchApp.fetch('https://api.todoist.com/rest/v2/tasks', options);
+  const response = UrlFetchApp.fetch('https://api.todoist.com/api/v1/tasks', options);
 
-  if (response.getResponseCode() !== 200) {
-    throw new Error(`Todoist API error: ${response.getContentText()}`);
+  const code = response.getResponseCode();
+  if (code < 200 || code >= 300) {
+    throw new Error(`Todoist API error (${code}): ${response.getContentText()}`);
   }
 
   return JSON.parse(response.getContentText());
@@ -840,3 +853,9 @@ function processZasilkovnaEmails() {
   processAllCarriers();
 }
 
+// Potřebuješ vyčistit uložená ID. Spusť v Apps Script tuto funkci:
+function clearProcessedIds() {
+  const props = PropertiesService.getScriptProperties();
+  props.deleteProperty('processedMessageIds');
+  Logger.log('Seznam zpracovaných ID vymazán.');
+}
