@@ -12,7 +12,7 @@
  * - GPS souřadnice a odkaz na Google Maps pro navigaci
  * - Odkaz na původní e-mail v Gmailu
  *
- * @version 2.3.0
+ * @version 2.4.0
  * @author Pavel Ungr
  * @see https://github.com/pungr/zasilkovna-todoist
  */
@@ -20,8 +20,9 @@
 // ============ KONFIGURACE ============
 const CONFIG = {
   TODOIST_API_TOKEN: 'your-todoist-api-token',
-  TODOIST_PROJECT_ID: 'your-project-id',
+  TODOIST_PROJECT_ID: 'your-project-id', // Auto TASK projekt
   GMAIL_LABEL_PROCESSED: 'Parcel-Todoist', // Label pro zpracované e-maily
+  MAX_EMAIL_AGE_DAYS: 7, // E-maily starší se jen olabelují bez úkolu (ochrana proti backlogu po výpadku triggeru)
 };
 
 // Konfigurace dopravců
@@ -104,6 +105,14 @@ function processCarrierEmails(carrierId, carrier) {
       // Zkontroluj, zda e-mail odpovídá dopravci
       const subject = message.getSubject().toLowerCase();
       if (subject.includes(carrier.subjectKeyword)) {
+        // Po výpadku triggeru nevytvářet úkoly pro dávno vyzvednuté/vrácené zásilky
+        const ageDays = (Date.now() - message.getDate().getTime()) / (1000 * 60 * 60 * 24);
+        if (ageDays > CONFIG.MAX_EMAIL_AGE_DAYS) {
+          processedIds.push(messageId);
+          Logger.log(`${carrier.name}: E-mail ${messageId} je starší než ${CONFIG.MAX_EMAIL_AGE_DAYS} dní – označen bez vytvoření úkolu.`);
+          continue;
+        }
+
         try {
           const emailData = carrier.parser(message);
 

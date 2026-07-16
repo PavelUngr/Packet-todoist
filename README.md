@@ -117,6 +117,9 @@ The script is designed to be easily extensible. To add a new carrier:
 
 ## Changelog
 
+### v2.4.0
+- **New:** Backlog protection - emails older than `MAX_EMAIL_AGE_DAYS` (default 7) are labeled as processed without creating a task. Prevents a flood of tasks for long-gone parcels after a trigger outage.
+
 ### v2.3.0
 - **Fix:** Label was added even when Todoist API failed, causing emails to be silently skipped on retry
 - **Migration:** Todoist REST API v2 → API v1 (v2 is deprecated)
