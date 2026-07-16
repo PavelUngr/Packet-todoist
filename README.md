@@ -118,6 +118,9 @@ The script is designed to be easily extensible. To add a new carrier:
 
 ## Changelog
 
+### v2.4.2
+- **New:** Zásilkovna pickup-point password ("Heslo pro vydání") is now extracted and shown in the task description on the 🔑 line (previously only Z-BOX/PPL/Balíkovna codes were).
+
 ### v2.4.1
 - **Fix:** Czech month names with diacritics (února, července, …) were not matched by the deadline regex (`\w` covers ASCII only) — the pickup deadline was silently missing for 7 out of 12 months. Switched to Unicode `\p{L}`.
 - **Fix:** Gmail link building no longer aborts task creation when the `userinfo.email` scope is missing (`Session.getActiveUser` now falls back to `u/0`). A missing scope previously blocked all task creation silently.

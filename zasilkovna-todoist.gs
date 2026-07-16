@@ -12,7 +12,7 @@
  * - GPS souřadnice a odkaz na Google Maps pro navigaci
  * - Odkaz na původní e-mail v Gmailu
  *
- * @version 2.4.1
+ * @version 2.4.2
  * @author Pavel Ungr
  * @see https://github.com/pungr/zasilkovna-todoist
  */
@@ -239,6 +239,13 @@ function parseZasilkovnaEmail(message) {
       if (plainPinMatch) {
         pin = plainPinMatch.slice(1, 7).join('');
       }
+    }
+  } else {
+    // Klasický formát: "Heslo pro vydání zásilky je 8JA14."
+    const passwordMatch = body.match(/Heslo pro vydání\s+zásilky je\s+([A-Za-z0-9]+)/i) ||
+                          htmlBody.match(/Heslo pro vydání(?:<[^>]*>|\s)*zásilky je(?:<[^>]*>|\s)*([A-Za-z0-9]+)/i);
+    if (passwordMatch) {
+      pin = passwordMatch[1].trim();
     }
   }
 
