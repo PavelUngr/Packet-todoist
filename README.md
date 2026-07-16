@@ -51,6 +51,7 @@ Fill in the `CONFIG` section:
 const CONFIG = {
   TODOIST_API_TOKEN: 'your-api-token',
   TODOIST_PROJECT_ID: 'your-project-id',
+  MAX_EMAIL_AGE_DAYS: 7, // emails older than this are labeled without creating a task
   // ...
 };
 ```
@@ -196,6 +197,7 @@ V sekci `CONFIG` vyplň:
 const CONFIG = {
   TODOIST_API_TOKEN: 'tvuj-api-token',
   TODOIST_PROJECT_ID: 'id-projektu',
+  MAX_EMAIL_AGE_DAYS: 7, // starší e-maily se jen označí, úkol nevznikne (ochrana po výpadku)
   // ...
 };
 ```
@@ -259,6 +261,10 @@ Skript je navržen pro snadné rozšíření. Pro přidání nového dopravce:
 - Google účet s Gmailem
 - Todoist účet (stačí free verze)
 - Todoist API v1 (`api.todoist.com/api/v1/`)
+
+## Changelog
+
+Viz [anglická verze](#changelog) výše – changelog udržujeme jen jednou.
 
 ## Licence
 
