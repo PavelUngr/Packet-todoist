@@ -12,7 +12,7 @@
  * - GPS souřadnice a odkaz na Google Maps pro navigaci
  * - Odkaz na původní e-mail v Gmailu
  *
- * @version 2.4.0
+ * @version 2.4.1
  * @author Pavel Ungr
  * @see https://github.com/pungr/zasilkovna-todoist
  */
@@ -212,7 +212,8 @@ function parseZasilkovnaEmail(message) {
     dueDate = parseNumericDate(numericDateMatch[1]);
   } else {
     // Klasický formát: "nejpozději dne 16. ledna" (slovní)
-    const dateMatch = body.match(/nejpozději dne\s+(\d{1,2}\.\s*\w+)/i);
+    // \p{L} místo \w – \w nematchuje písmena s diakritikou (února, července, …)
+    const dateMatch = body.match(/nejpozději dne\s+(\d{1,2}\.\s*\p{L}+)/iu);
     if (dateMatch) {
       dueDate = parseCzechDate(dateMatch[1].trim());
     }
@@ -261,8 +262,7 @@ function parseZasilkovnaEmail(message) {
 
   // Vytvoř odkaz na e-mail v Gmailu (bez hardcoded u/0 – funguje na jakémkoli účtu)
   const messageId = message.getId();
-  const userEmail = Session.getActiveUser().getEmail();
-  const gmailLink = `https://mail.google.com/mail/u/${userEmail}/#inbox/${messageId}`;
+  const gmailLink = buildGmailLink(messageId);
 
   // Datum přijetí e-mailu
   const emailDate = message.getDate();
@@ -352,7 +352,7 @@ function parsePPLEmail(message) {
 
   // Vytvoř odkaz na e-mail v Gmailu
   const messageId = message.getId();
-  const gmailLink = `https://mail.google.com/mail/u/${Session.getActiveUser().getEmail()}/#inbox/${messageId}`;
+  const gmailLink = buildGmailLink(messageId);
 
   // Datum přijetí e-mailu
   const emailDate = message.getDate();
@@ -457,7 +457,7 @@ function parseBalikovna(message) {
 
   // Odkaz na e-mail v Gmailu
   const messageId = message.getId();
-  const gmailLink = `https://mail.google.com/mail/u/${Session.getActiveUser().getEmail()}/#inbox/${messageId}`;
+  const gmailLink = buildGmailLink(messageId);
 
   // Datum přijetí e-mailu
   const emailDate = message.getDate();
@@ -477,6 +477,21 @@ function parseBalikovna(message) {
 }
 
 /**
+ * Sestaví odkaz na e-mail v Gmailu.
+ * Session.getActiveUser() vyžaduje scope userinfo.email – bez něj nesmí
+ * spadnout celé zpracování e-mailu (viz incident 4–7/2026), proto fallback na u/0.
+ */
+function buildGmailLink(messageId) {
+  let account = '0';
+  try {
+    account = Session.getActiveUser().getEmail() || '0';
+  } catch (e) {
+    Logger.log(`Session.getActiveUser selhal (chybí scope userinfo.email), používám u/0: ${e.message}`);
+  }
+  return `https://mail.google.com/mail/u/${account}/#inbox/${messageId}`;
+}
+
+/**
  * Převede český datum (např. "16. ledna") na ISO formát
  */
 function parseCzechDate(dateText) {
@@ -488,7 +503,8 @@ function parseCzechDate(dateText) {
     'září': 9, 'října': 10, 'listopadu': 11, 'prosince': 12
   };
 
-  const match = dateText.match(/(\d{1,2})\.\s*(\w+)/);
+  // \p{L} místo \w – \w nematchuje písmena s diakritikou (února, července, …)
+  const match = dateText.match(/(\d{1,2})\.\s*(\p{L}+)/u);
   if (!match) return null;
 
   const day = parseInt(match[1]);
@@ -677,7 +693,8 @@ vaše zásilka číslo Z 262 4868 930 od odesilatele WITTCHEN S.A. je pro vás p
 
 Heslo pro vydání zásilky je V143C.
 
-Zásilku si můžete vyzvednout nejpozději dne 16. ledna.`;
+Zásilku si můžete vyzvednout nejpozději dne 23. července.`;
+  // "července" záměrně s diakritikou – regrese na bug s \w (viz v2.4.1)
 
   const mockMessage = {
     getPlainBody: () => testBody,
