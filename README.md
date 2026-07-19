@@ -25,15 +25,19 @@ When you receive an email notifying that your parcel is ready for pickup, the sc
    - GPS coordinates (from map links)
 
 2. Creates a Todoist task:
-   - **Title:** `📦 [Carrier] k vyzvednutí od [sender] v [location] (do [deadline])`
-   - **Due date:** Day when email arrived (when to start dealing with pickup)
-   - **Deadline:** Last day to pick up the parcel
+   - **Title:** `📦 [Vyzvednout zásilku od {sender} v {location}]({tracking URL})` – an active tracking link; falls back to the email subject when the sender cannot be extracted
+   - **Due date:** Day when email arrived (when to start dealing with pickup), today as fallback
+   - **Deadline:** Last day to pick up the parcel (`deadline_date`)
+   - **Labels/priority:** configurable label (default `⏲️Rychlovka`), priority p2 – automation never creates p1
    - **Description:**
-     - Pickup deadline
-     - Tracking number
-     - PIN (if available)
-     - Link to original email
-     - Google Maps navigation link
+     - Carrier and tracking link
+     - Pickup location
+     - PIN/password (if available)
+     - Tracking number and pickup deadline
+     - Link to original email + Google Maps navigation link
+     - Deduplication key `gmail:<thread-id>` on the last line
+
+3. Deduplicates: before creating a task it scans active tasks in the target project for the `gmail:<thread-id>` key, and logs every run to a `balickomat.log` file on Google Drive.
 
 ## Installation
 
@@ -118,6 +122,15 @@ The script is designed to be easily extensible. To add a new carrier:
 
 ## Changelog
 
+### v2.5.0
+- **New:** Task format aligned with a personal Todoist taxonomy: linked title `📦 [Vyzvednout zásilku od {sender} v {location}]({tracking URL})`, configurable target project and labels, tracking link extraction for all carriers.
+- **New:** Sender fallback – when the sender cannot be extracted, the email subject is used as the task title (no more broken names).
+- **New:** Deduplication by `gmail:<thread-id>` key stored in task descriptions.
+- **New:** Run logging to `balickomat.log` on Google Drive (processed/created/deduped/skipped/errors).
+- **New:** `dryRunAllCarriers()` / `dryRunThread()` (preview without side effects) and `reprocessThread()` (re-test a thread).
+- **Fix:** Deadline was silently never set – POST /tasks expects `deadline_date`, not a `deadline` object (bug since v2.3.0).
+- **Change:** Explicit `oauthScopes` in the manifest (full `drive` scope is required by `DriveApp.createFile`).
+
 ### v2.4.2
 - **New:** Zásilkovna pickup-point password ("Heslo pro vydání") is now extracted and shown in the task description on the 🔑 line (previously only Z-BOX/PPL/Balíkovna codes were).
 
@@ -174,15 +187,19 @@ Když ti přijde e-mail s oznámením, že je zásilka připravena k vyzvednutí
    - GPS souřadnice (z odkazů na mapu)
 
 2. Vytvoří úkol v Todoist:
-   - **Název:** `📦 [Dopravce] k vyzvednutí od [odesílatel] v [místo] (do [termín])`
-   - **Termín realizace (due date):** Den kdy přišel e-mail (kdy začít řešit vyzvednutí)
-   - **Termín dokončení (deadline):** Poslední den k vyzvednutí zásilky
+   - **Název:** `📦 [Vyzvednout zásilku od {odesílatel} v {místo}]({odkaz na sledování})` – aktivní odkaz; když se odesílatel nevytáhne, použije se předmět e-mailu
+   - **Termín realizace (due date):** Den kdy přišel e-mail (kdy začít řešit vyzvednutí), jinak dnešek
+   - **Termín dokončení (deadline):** Poslední den k vyzvednutí zásilky (`deadline_date`)
+   - **Štítek/priorita:** konfigurovatelný štítek (default `⏲️Rychlovka`), priorita p2 – automat nikdy nezakládá p1
    - **Popis:**
-     - Termín vyzvednutí
-     - Číslo zásilky
-     - PIN (pokud je k dispozici)
-     - Odkaz na původní e-mail
-     - Odkaz na Google Maps pro navigaci
+     - Dopravce a odkaz na sledování
+     - Výdejní místo
+     - Kód/heslo pro vyzvednutí (pokud je k dispozici)
+     - Číslo zásilky a termín vyzvednutí
+     - Odkaz na původní e-mail + navigace Google Maps
+     - Deduplikační klíč `gmail:<thread-id>` na posledním řádku
+
+3. Deduplikuje: před založením prohledá aktivní úkoly cílového projektu na klíč `gmail:<thread-id>`. Každý běh loguje do souboru `balickomat.log` na Google Drive.
 
 ## Instalace
 

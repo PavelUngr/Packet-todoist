@@ -12,7 +12,7 @@
  * - GPS souřadnice a odkaz na Google Maps pro navigaci
  * - Odkaz na původní e-mail v Gmailu
  *
- * @version 2.4.2
+ * @version 2.5.0
  * @author Pavel Ungr
  * @see https://github.com/pungr/zasilkovna-todoist
  */
@@ -20,9 +20,11 @@
 // ============ KONFIGURACE ============
 const CONFIG = {
   TODOIST_API_TOKEN: 'your-todoist-api-token',
-  TODOIST_PROJECT_ID: 'your-project-id', // Auto TASK projekt
+  TODOIST_PROJECT_ID: 'your-project-id', // cílový projekt pro úkoly
+  TODOIST_LABELS: ['⏲️Rychlovka'], // Štítek úkolu; automat nikdy nezakládá p1 ani ⚡ URGENT ⚡
   GMAIL_LABEL_PROCESSED: 'Parcel-Todoist', // Label pro zpracované e-maily
   MAX_EMAIL_AGE_DAYS: 7, // E-maily starší se jen olabelují bez úkolu (ochrana proti backlogu po výpadku triggeru)
+  LOG_FILE_NAME: 'balickomat.log', // Log běhů na Google Drive (ID souboru drží ScriptProperties.logFileId)
 };
 
 // Konfigurace dopravců
@@ -51,44 +53,62 @@ const CARRIERS = {
 };
 
 /**
- * Hlavní funkce - spouští se pravidelně, zpracuje všechny dopravce
+ * Hlavní funkce - spouští se pravidelně (trigger), zpracuje všechny dopravce
  */
 function processAllCarriers() {
-  let totalNewTasks = 0;
-
-  for (const [carrierId, carrier] of Object.entries(CARRIERS)) {
-    const newTasks = processCarrierEmails(carrierId, carrier);
-    totalNewTasks += newTasks;
-  }
-
-  Logger.log(`Celkem zpracováno ${totalNewTasks} nových e-mailů.`);
+  runAllCarriers(false);
 }
 
 /**
- * Zpracuje e-maily od konkrétního dopravce
+ * Dry-run: vypíše do logu, co by se založilo. Nezakládá úkoly, nelabeluje,
+ * neukládá processedMessageIds. Spustit ručně před ostrým nasazením změn.
  */
-function processCarrierEmails(carrierId, carrier) {
+function dryRunAllCarriers() {
+  runAllCarriers(true);
+}
+
+function runAllCarriers(dryRun) {
+  const stats = { processed: 0, created: 0, skippedDedup: 0, skippedOld: 0, errors: [] };
+  const dedupKeys = getExistingDedupKeys();
+
+  for (const [carrierId, carrier] of Object.entries(CARRIERS)) {
+    processCarrierEmails(carrierId, carrier, dryRun, dedupKeys, stats);
+  }
+
+  const summary = `${dryRun ? 'DRY-RUN | ' : ''}zpracováno: ${stats.processed} | založeno: ${stats.created}` +
+                  ` | dedup přeskočeno: ${stats.skippedDedup} | staré přeskočeno: ${stats.skippedOld}` +
+                  ` | chyby: ${stats.errors.length}${stats.errors.length ? ' – ' + stats.errors.join('; ') : ''}`;
+  Logger.log(summary);
+  appendRunLog(summary);
+}
+
+/**
+ * Zpracuje e-maily od konkrétního dopravce.
+ * V dry-run režimu nic nemění (žádné úkoly, labely ani properties), jen loguje.
+ */
+function processCarrierEmails(carrierId, carrier, dryRun, dedupKeys, stats) {
   // Hledej nezpracované e-maily
   const query = `${carrier.fromQuery} subject:${carrier.subjectKeyword} -label:${CONFIG.GMAIL_LABEL_PROCESSED}`;
   const threads = GmailApp.search(query, 0, 10);
 
   if (threads.length === 0) {
     Logger.log(`${carrier.name}: Žádné nové e-maily.`);
-    return 0;
+    return;
   }
 
-  // Vytvoř label pokud neexistuje
-  let label = GmailApp.getUserLabelByName(CONFIG.GMAIL_LABEL_PROCESSED);
-  if (!label) {
-    label = GmailApp.createLabel(CONFIG.GMAIL_LABEL_PROCESSED);
+  // Vytvoř label pokud neexistuje (mimo dry-run – vytvoření labelu je zápis)
+  let label = null;
+  if (!dryRun) {
+    label = GmailApp.getUserLabelByName(CONFIG.GMAIL_LABEL_PROCESSED);
+    if (!label) {
+      label = GmailApp.createLabel(CONFIG.GMAIL_LABEL_PROCESSED);
+    }
   }
 
   // Načti seznam již zpracovaných ID zpráv
   const props = PropertiesService.getScriptProperties();
   const processedIdsJson = props.getProperty('processedMessageIds') || '[]';
   const processedIds = JSON.parse(processedIdsJson);
-
-  let newTasksCount = 0;
 
   for (const thread of threads) {
     const messages = thread.getMessages();
@@ -104,49 +124,72 @@ function processCarrierEmails(carrierId, carrier) {
 
       // Zkontroluj, zda e-mail odpovídá dopravci
       const subject = message.getSubject().toLowerCase();
-      if (subject.includes(carrier.subjectKeyword)) {
-        // Po výpadku triggeru nevytvářet úkoly pro dávno vyzvednuté/vrácené zásilky
-        const ageDays = (Date.now() - message.getDate().getTime()) / (1000 * 60 * 60 * 24);
-        if (ageDays > CONFIG.MAX_EMAIL_AGE_DAYS) {
-          processedIds.push(messageId);
-          Logger.log(`${carrier.name}: E-mail ${messageId} je starší než ${CONFIG.MAX_EMAIL_AGE_DAYS} dní – označen bez vytvoření úkolu.`);
+      if (!subject.includes(carrier.subjectKeyword)) {
+        continue;
+      }
+
+      // Po výpadku triggeru nevytvářet úkoly pro dávno vyzvednuté/vrácené zásilky
+      const ageDays = (Date.now() - message.getDate().getTime()) / (1000 * 60 * 60 * 24);
+      if (ageDays > CONFIG.MAX_EMAIL_AGE_DAYS) {
+        if (!dryRun) processedIds.push(messageId);
+        Logger.log(`${carrier.name}: E-mail ${messageId} je starší než ${CONFIG.MAX_EMAIL_AGE_DAYS} dní – označen bez vytvoření úkolu.`);
+        stats.skippedOld++;
+        continue;
+      }
+
+      try {
+        const emailData = carrier.parser(message);
+        if (!emailData) {
+          if (!dryRun) processedIds.push(messageId);
+          continue;
+        }
+        emailData.carrier = carrier.name;
+        emailData.icon = carrier.icon;
+        stats.processed++;
+
+        const dedupKey = `gmail:${thread.getId()}`;
+        const payload = buildTaskPayload(emailData, message, dedupKey);
+
+        // Deduplikace podle klíče gmail:<thread-id> v popisech úkolů projektu
+        if (dedupKeys.has(dedupKey)) {
+          Logger.log(`${carrier.name}: Úkol s klíčem ${dedupKey} už existuje – nezakládám (deduplikace).`);
+          stats.skippedDedup++;
+          if (!dryRun) processedIds.push(messageId);
           continue;
         }
 
-        try {
-          const emailData = carrier.parser(message);
-
-          if (emailData) {
-            emailData.carrier = carrier.name;
-            emailData.icon = carrier.icon;
-            createTodoistTask(emailData);
-            Logger.log(`${carrier.name}: Vytvořen úkol - ${emailData.sender} - ${emailData.address}`);
-            newTasksCount++;
-          }
-
-          // Označ zprávu jako zpracovanou
+        if (dryRun) {
+          Logger.log(`${carrier.name}: DRY-RUN – založil by se úkol:\n${JSON.stringify(payload, null, 2)}`);
+        } else {
+          createTodoistTask(payload);
+          dedupKeys.add(dedupKey);
           processedIds.push(messageId);
-
-        } catch (error) {
-          Logger.log(`${carrier.name}: Chyba při zpracování e-mailu ${messageId}: ${error.message}`);
-          threadFullyProcessed = false;
+          Logger.log(`${carrier.name}: Vytvořen úkol – ${payload.content}`);
         }
+        stats.created++;
+
+      } catch (error) {
+        Logger.log(`${carrier.name}: Chyba při zpracování e-mailu ${messageId}: ${error.message}`);
+        stats.errors.push(`${carrier.name}/${messageId}: ${error.message}`);
+        threadFullyProcessed = false;
       }
     }
 
     // Označ vlákno labelem POUZE pokud byly všechny zprávy úspěšně zpracovány
-    if (threadFullyProcessed) {
-      thread.addLabel(label);
-    } else {
-      Logger.log(`${carrier.name}: Vlákno neolabelováno - některé zprávy se nepodařilo zpracovat, zkusí se znovu.`);
+    if (!dryRun) {
+      if (threadFullyProcessed) {
+        thread.addLabel(label);
+      } else {
+        Logger.log(`${carrier.name}: Vlákno neolabelováno - některé zprávy se nepodařilo zpracovat, zkusí se znovu.`);
+      }
     }
   }
 
   // Ulož aktualizovaný seznam zpracovaných ID (ponechej jen posledních 500)
-  const trimmedIds = processedIds.slice(-500);
-  props.setProperty('processedMessageIds', JSON.stringify(trimmedIds));
-
-  return newTasksCount;
+  if (!dryRun) {
+    const trimmedIds = processedIds.slice(-500);
+    props.setProperty('processedMessageIds', JSON.stringify(trimmedIds));
+  }
 }
 
 /**
@@ -165,7 +208,7 @@ function parseZasilkovnaEmail(message) {
   const isZBox = body.includes('Z-BOX') || body.includes('dorazila do Z-BOXu');
 
   // Extrahuj odesílatele
-  let sender = 'Neznámý odesílatel';
+  let sender = null; // když se nevytáhne, buildTaskPayload použije předmět e-mailu
   if (isZBox) {
     // Z-BOX formát: "od Yanwen Logistics Co., Ltd. Shanghai Branch právě dorazila"
     // V plain textu může být odesílatel na samostatném řádku
@@ -267,6 +310,14 @@ function parseZasilkovnaEmail(message) {
     }
   }
 
+  // Odkaz na sledování zásilky (v HTML verzi e-mailu)
+  let trackingUrl = null;
+  const trackingUrlMatch = htmlBody.match(/https:\/\/tracking\.packeta\.com\/[^\s"'<>]+/i) ||
+                           body.match(/https:\/\/tracking\.packeta\.com\/[^\s"'<>]+/i);
+  if (trackingUrlMatch) {
+    trackingUrl = trackingUrlMatch[0].replace(/&amp;/g, '&');
+  }
+
   // Vytvoř odkaz na e-mail v Gmailu (bez hardcoded u/0 – funguje na jakémkoli účtu)
   const messageId = message.getId();
   const gmailLink = buildGmailLink(messageId);
@@ -279,6 +330,7 @@ function parseZasilkovnaEmail(message) {
     sender: sender,
     address: location,
     dueDate: dueDate,
+    trackingUrl: trackingUrl,
     trackingNumber: trackingNumber,
     pin: pin,
     gmailLink: gmailLink,
@@ -303,7 +355,7 @@ function parsePPLEmail(message) {
   }
 
   // Extrahuj odesílatele (např. "TRIGON MEDIA s.r.o.")
-  let sender = 'Neznámý odesílatel';
+  let sender = null; // když se nevytáhne, buildTaskPayload použije předmět e-mailu
   const senderMatch = htmlBody.match(/Odes[ií]latel:[\s\S]*?<td[^>]*>([^<]+)</i) ||
                       body.match(/Odes[ií]latel:\s*(.+)/i);
   if (senderMatch) {
@@ -357,6 +409,13 @@ function parsePPLEmail(message) {
     pin = pinMatch[1].trim();
   }
 
+  // Odkaz na sledování zásilky (hledá se v HTML verzi e-mailu)
+  let trackingUrl = null;
+  const pplUrlMatch = htmlBody.match(/https?:\/\/(?:www\.)?ppl\.cz\/[^\s"'<>]*(?:vyhledat|track|zasilk)[^\s"'<>]*/i);
+  if (pplUrlMatch) {
+    trackingUrl = pplUrlMatch[0].replace(/&amp;/g, '&');
+  }
+
   // Vytvoř odkaz na e-mail v Gmailu
   const messageId = message.getId();
   const gmailLink = buildGmailLink(messageId);
@@ -372,6 +431,7 @@ function parsePPLEmail(message) {
     trackingNumber: trackingNumber,
     pin: pin,
     gmailLink: gmailLink,
+    trackingUrl: trackingUrl,
     emailDate: emailDateFormatted
   };
 }
@@ -390,7 +450,7 @@ function parseBalikovna(message) {
 
   // Extrahuj odesílatele
   // HTML: <b>Odesílatel:</b> E.M.P. Merchandising Handelsge<br/>
-  let sender = 'Neznámý odesílatel';
+  let sender = null; // když se nevytáhne, buildTaskPayload použije předmět e-mailu
   const senderMatch = htmlBody.match(/Odes[ií]latel:<\/b>\s*([^<]+)/i) ||
                       body.match(/Odes[ií]latel:\s*(.+)/i);
   if (senderMatch) {
@@ -462,6 +522,13 @@ function parseBalikovna(message) {
     }
   }
 
+  // Odkaz na sledování balíku (v HTML verzi e-mailu)
+  let trackingUrl = null;
+  const balikovnaUrlMatch = htmlBody.match(/https?:\/\/(?:www\.)?balikovna\.cz\/[^\s"'<>]*sledovat-balik[^\s"'<>]*/i);
+  if (balikovnaUrlMatch) {
+    trackingUrl = balikovnaUrlMatch[0].replace(/&amp;/g, '&');
+  }
+
   // Odkaz na e-mail v Gmailu
   const messageId = message.getId();
   const gmailLink = buildGmailLink(messageId);
@@ -474,6 +541,7 @@ function parseBalikovna(message) {
     sender: sender,
     address: address,
     dueDate: dueDate,
+    trackingUrl: trackingUrl,
     trackingNumber: trackingNumber,
     pin: pin,
     gmailLink: gmailLink,
@@ -567,59 +635,64 @@ function formatDateCzech(isoDate) {
 }
 
 /**
- * Vytvoří úkol v Todoist
+ * Sestaví payload úkolu podle pravidel skillu todoist-zadavani:
+ * projekt 🏠 Domácnost, p2, štítek ⏲️Rychlovka, aktivní odkaz v názvu i popisu,
+ * deduplikační klíč gmail:<thread-id> na konci popisu.
  */
-function createTodoistTask(emailData) {
-  const carrierName = emailData.carrier || 'Zásilka';
-  const icon = emailData.icon || '📦';
-
-  // Název úkolu s termínem vyzvednutí v závorce (čitelný formát)
-  let taskName = `${icon} ${carrierName} k vyzvednutí od ${emailData.sender} v ${emailData.address}`;
-  if (emailData.dueDate) {
-    const dueDateFormatted = formatDateCzech(emailData.dueDate);
-    taskName += ` (do ${dueDateFormatted})`;
+function buildTaskPayload(emailData, message, dedupKey) {
+  // Fallback: bez odesílatele použij předmět e-mailu.
+  // Název s visící pomlčkou / prázdným odesílatelem nesmí nikdy vzniknout.
+  const sender = (emailData.sender || '').trim();
+  let baseTitle = sender
+    ? `Vyzvednout zásilku od ${sender}`
+    : (message.getSubject() || 'Vyzvednout zásilku').trim();
+  // Výdejní místo patří i do názvu, ať je vidět bez rozklikávání
+  if (emailData.address && emailData.address !== 'Neznámé místo') {
+    baseTitle += ` v ${emailData.address}`;
   }
+  const icon = emailData.icon || '📦';
+  const content = emailData.trackingUrl
+    ? `${icon} [${baseTitle}](${emailData.trackingUrl})`
+    : `${icon} ${baseTitle}`;
+
+  const lines = [];
+  if (emailData.carrier) lines.push(`🚚 Dopravce: ${emailData.carrier}`);
+  if (emailData.trackingUrl) lines.push(`🔗 [Sledování zásilky](${emailData.trackingUrl})`);
+  if (emailData.address && emailData.address !== 'Neznámé místo') lines.push(`📍 Výdejní místo: ${emailData.address}`);
+  if (emailData.pin) lines.push(`🔑 Kód/heslo: ${emailData.pin}`);
+  if (emailData.trackingNumber) lines.push(`📦 Číslo zásilky: ${emailData.trackingNumber}`);
+  if (emailData.dueDate) lines.push(`⏰ Vyzvednout do: ${formatDateCzech(emailData.dueDate)}`);
+  if (emailData.gmailLink) lines.push(`📧 [Otevřít e-mail](${emailData.gmailLink})`);
+  if (emailData.latitude && emailData.longitude) {
+    lines.push(`🗺️ [Navigovat](https://www.google.com/maps?q=${emailData.latitude},${emailData.longitude})`);
+  }
+  lines.push('');
+  lines.push(dedupKey);
 
   const payload = {
-    content: taskName,
+    content: content,
+    description: lines.join('\n'),
     project_id: CONFIG.TODOIST_PROJECT_ID,
-    priority: 3 // Střední priorita
+    priority: 3, // p2 v UI (API: 4 = p1) – automat nikdy nezakládá p1
+    labels: CONFIG.TODOIST_LABELS.slice(),
+    // Due date = den doručení e-mailu (kdy začít řešit), fallback dnešek
+    due_date: emailData.emailDate || Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd')
   };
 
-  // Due date = den kdy přišel e-mail (kdy začít řešit)
-  if (emailData.emailDate) {
-    payload.due_date = emailData.emailDate;
-  }
-
   // Deadline = poslední den k vyzvednutí (kdy musí být hotovo)
+  // POST /tasks bere deadline_date; objekt deadline je jen ve výstupní reprezentaci API
   if (emailData.dueDate) {
-    payload.deadline = { date: emailData.dueDate };
+    payload.deadline_date = emailData.dueDate;
+    payload.deadline_lang = 'en';
   }
 
-  // Popis s termínem vyzvednutí, číslem zásilky a odkazem
-  let description = '';
-  if (emailData.dueDate) {
-    const dueDateFormatted = formatDateCzech(emailData.dueDate);
-    description += `⏰ Vyzvednout do: ${dueDateFormatted}\n`;
-  }
-  if (emailData.trackingNumber) {
-    description += `📦 Číslo zásilky: ${emailData.trackingNumber}\n`;
-  }
-  if (emailData.pin) {
-    description += `🔑 PIN: ${emailData.pin}\n`;
-  }
-  description += '\n';
-  if (emailData.gmailLink) {
-    description += `📧 [Otevřít e-mail](${emailData.gmailLink})\n`;
-  }
-  if (emailData.latitude && emailData.longitude) {
-    const mapsUrl = `https://www.google.com/maps?q=${emailData.latitude},${emailData.longitude}`;
-    description += `🗺️ [Navigovat](${mapsUrl})`;
-  }
-  if (description) {
-    payload.description = description.trim();
-  }
+  return payload;
+}
 
+/**
+ * Vytvoří úkol v Todoist z hotového payloadu
+ */
+function createTodoistTask(payload) {
   const options = {
     method: 'POST',
     headers: {
@@ -638,6 +711,142 @@ function createTodoistTask(emailData) {
   }
 
   return JSON.parse(response.getContentText());
+}
+
+/**
+ * Načte deduplikační klíče gmail:<thread-id> z popisů aktivních úkolů cílového projektu.
+ * Deduplikace je pojistka – když se načtení nepovede, běh nesmí spadnout
+ * (první vrstvu kryje label Parcel-Todoist + processedMessageIds).
+ */
+function getExistingDedupKeys() {
+  const keys = new Set();
+  try {
+    let cursor = null;
+    do {
+      let url = `https://api.todoist.com/api/v1/tasks?project_id=${CONFIG.TODOIST_PROJECT_ID}&limit=200`;
+      if (cursor) {
+        url += `&cursor=${encodeURIComponent(cursor)}`;
+      }
+      const response = UrlFetchApp.fetch(url, {
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${CONFIG.TODOIST_API_TOKEN}` },
+        muteHttpExceptions: true
+      });
+      const code = response.getResponseCode();
+      if (code < 200 || code >= 300) {
+        throw new Error(`Todoist API error (${code})`);
+      }
+      const data = JSON.parse(response.getContentText());
+      (data.results || []).forEach(function(task) {
+        const matches = (task.description || '').match(/gmail:[0-9a-f]+/g);
+        if (matches) {
+          matches.forEach(function(m) { keys.add(m); });
+        }
+      });
+      cursor = data.next_cursor || null;
+    } while (cursor);
+  } catch (e) {
+    Logger.log(`Načtení dedup klíčů selhalo (deduplikace pro tento běh vypnutá): ${e.message}`);
+  }
+  return keys;
+}
+
+/**
+ * Připíše řádek do logu běhů (soubor balickomat.log na Google Drive).
+ * Formát: datum | zpracováno | založeno | dedup | staré | chyby.
+ * Selhání logování nesmí shodit zpracování e-mailů.
+ */
+function appendRunLog(summary) {
+  try {
+    const props = PropertiesService.getScriptProperties();
+    let file = null;
+    const fileId = props.getProperty('logFileId');
+    if (fileId) {
+      try {
+        file = DriveApp.getFileById(fileId);
+      } catch (e) {
+        file = null; // soubor smazán – založí se nový
+      }
+    }
+    if (!file) {
+      file = DriveApp.createFile(CONFIG.LOG_FILE_NAME, '', MimeType.PLAIN_TEXT);
+      props.setProperty('logFileId', file.getId());
+    }
+
+    const stamp = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss');
+    let content = file.getBlob().getDataAsString() + `${stamp} | ${summary}\n`;
+    // Drž log pod ~200 kB (Drive soubor se přepisuje celý)
+    if (content.length > 200000) {
+      content = content.slice(content.length - 150000);
+    }
+    file.setContent(content);
+  } catch (e) {
+    Logger.log(`Zápis do logu selhal: ${e.message}`);
+  }
+}
+
+/**
+ * Odebere vláknu label Parcel-Todoist a jeho zprávy vyřadí z processedMessageIds,
+ * aby ho příští běh zpracoval znovu (testování, oprava chybného zpracování).
+ */
+function reprocessThread(threadId) {
+  const thread = GmailApp.getThreadById(threadId);
+  if (!thread) {
+    Logger.log(`Vlákno ${threadId} nenalezeno.`);
+    return;
+  }
+  const label = GmailApp.getUserLabelByName(CONFIG.GMAIL_LABEL_PROCESSED);
+  if (label) {
+    thread.removeLabel(label);
+  }
+  const props = PropertiesService.getScriptProperties();
+  const processedIds = JSON.parse(props.getProperty('processedMessageIds') || '[]');
+  const messageIds = thread.getMessages().map(function(m) { return m.getId(); });
+  const filtered = processedIds.filter(function(id) { return messageIds.indexOf(id) === -1; });
+  props.setProperty('processedMessageIds', JSON.stringify(filtered));
+  Logger.log(`Vlákno ${threadId}: label odebrán, ${processedIds.length - filtered.length} ID vyřazeno z processedMessageIds.`);
+}
+
+/** Obálka pro editor (neumí předat parametr) – akceptační test v2.5.0. */
+function reprocessTestThread() {
+  reprocessThread('19f69c3ab5f504d6'); // Zásilkovna 16. 7. 2026 (Don Pealo)
+}
+
+/**
+ * Dry-run konkrétního vlákna bez ohledu na label a processedMessageIds.
+ * Nic nemění – vypíše payload, který by vznikl, a stav deduplikace.
+ */
+function dryRunThread(threadId) {
+  const thread = GmailApp.getThreadById(threadId);
+  if (!thread) {
+    Logger.log(`Vlákno ${threadId} nenalezeno.`);
+    return;
+  }
+  const dedupKeys = getExistingDedupKeys();
+  const dedupKey = `gmail:${thread.getId()}`;
+
+  thread.getMessages().forEach(function(message) {
+    const from = message.getFrom().toLowerCase();
+    const subject = message.getSubject().toLowerCase();
+    for (const [carrierId, carrier] of Object.entries(CARRIERS)) {
+      const domain = carrier.fromQuery.replace('from:', '').toLowerCase();
+      if (from.indexOf(domain) === -1 || !subject.includes(carrier.subjectKeyword)) {
+        continue;
+      }
+      const emailData = carrier.parser(message);
+      emailData.carrier = carrier.name;
+      emailData.icon = carrier.icon;
+      const payload = buildTaskPayload(emailData, message, dedupKey);
+      Logger.log(`DRY-RUN ${carrier.name} – payload úkolu:\n${JSON.stringify(payload, null, 2)}`);
+      Logger.log(`Deduplikace: klíč ${dedupKey} ${dedupKeys.has(dedupKey) ? 'UŽ EXISTUJE – úkol by se NEzaložil' : 'neexistuje – úkol by se založil'}`);
+      break;
+    }
+  });
+}
+
+/** Obálka pro editor – dry-run akceptačního vlákna. */
+function dryRunTestThread() {
+  dryRunThread('19f69c3ab5f504d6'); // Zásilkovna 16. 7. 2026 (Don Pealo)
 }
 
 /**
@@ -700,7 +909,8 @@ vaše zásilka číslo Z 262 4868 930 od odesilatele WITTCHEN S.A. je pro vás p
 
 Heslo pro vydání zásilky je V143C.
 
-Zásilku si můžete vyzvednout nejpozději dne 23. července.`;
+Zásilku si můžete vyzvednout nejpozději dne 23. července.
+Trasování Vaší zásilky: https://tracking.packeta.com/?id=Z2624868930`;
   // "července" záměrně s diakritikou – regrese na bug s \w (viz v2.4.1)
 
   const mockMessage = {
