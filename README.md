@@ -46,6 +46,7 @@ When you receive an email notifying that your parcel is ready for pickup, the sc
 1. Go to [script.google.com](https://script.google.com)
 2. Click **New project**
 3. Delete content and paste code from `zasilkovna-todoist.gs`
+4. In Project Settings enable **Show "appsscript.json" manifest file in editor** and replace its content with `appsscript.json` from this repo (explicit OAuth scopes – Gmail, UrlFetch, triggers, user email, Drive for the run log)
 
 ### 2. Configure
 
@@ -208,6 +209,7 @@ Když ti přijde e-mail s oznámením, že je zásilka připravena k vyzvednutí
 1. Jdi na [script.google.com](https://script.google.com)
 2. Klikni na **Nový projekt**
 3. Smaž obsah a vlož kód ze souboru `zasilkovna-todoist.gs`
+4. V Nastavení projektu zapni **Zobrazit soubor manifestu „appsscript.json" v editoru** a nahraď jeho obsah souborem `appsscript.json` z tohoto repa (explicitní OAuth scopes – Gmail, UrlFetch, triggery, e-mail uživatele, Drive pro log běhů)
 
 ### 2. Nastav konfiguraci
 
