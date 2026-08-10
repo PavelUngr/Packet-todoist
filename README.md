@@ -1,6 +1,6 @@
-# Zásilkovna & PPL & Balíkovna → Todoist
+# Zásilkovna & PPL & Balíkovna & Alza → Todoist
 
-Google Apps Script that automatically creates Todoist tasks from Zásilkovna, PPL and Balíkovna (Czech parcel delivery services) emails.
+Google Apps Script that automatically creates Todoist tasks from Zásilkovna, PPL, Balíkovna and Alza (Czech parcel delivery services) emails.
 
 *[Česká verze níže](#česká-verze)*
 
@@ -11,6 +11,7 @@ Google Apps Script that automatically creates Todoist tasks from Zásilkovna, PP
 - **Zásilkovna** (Packeta) - pickup points and Z-BOX parcel lockers
 - **PPL** - parcel pickup points (ParcelShop)
 - **Balíkovna** (Czech Post) - parcel boxes and pickup points
+- **Alza** (AlzaBox) - direct e-shop + carrier, always its own sender
 
 ## What it does
 
@@ -72,7 +73,7 @@ curl -X GET "https://api.todoist.com/api/v1/projects" \
 
 ### 3. Grant permissions
 
-1. Run `testZasilkovna`, `testPPL` or `testBalikovna` function
+1. Run `testZasilkovna`, `testPPL`, `testBalikovna` or `testAlza` function
 2. Google will ask for Gmail access - allow everything
 3. On "Google hasn't verified this app" warning, click "Advanced" → "Go to project"
 
@@ -106,6 +107,7 @@ Gmail links in task descriptions use `Session.getActiveUser().getEmail()` instea
 | `testZasilkovna` | Test Zásilkovna email parsing |
 | `testPPL` | Test PPL email parsing |
 | `testBalikovna` | Test Balíkovna email parsing |
+| `testAlza` | Test Alza (AlzaBox) email parsing |
 
 ## Adding new carriers
 
@@ -122,6 +124,9 @@ The script is designed to be easily extensible. To add a new carrier:
 - Todoist API v1 (`api.todoist.com/api/v1/`)
 
 ## Changelog
+
+### v2.6.0
+- **New:** Alza (AlzaBox) carrier support. Alza is both the e-shop and the carrier, so the sender is always fixed to "Alza.cz". The pickup code and deadline sit in a 3-column/3-value HTML table with identical CSS classes for labels and values, so they're extracted positionally (4th and 6th cell) rather than by matching the label text.
 
 ### v2.5.0
 - **New:** Task format aligned with a personal Todoist taxonomy: linked title `📦 [Vyzvednout zásilku od {sender} v {location}]({tracking URL})`, configurable target project and labels, tracking link extraction for all carriers.
@@ -167,13 +172,14 @@ MIT
 
 # Česká verze
 
-Google Apps Script, který automaticky vytváří úkoly v Todoist z e-mailů od Zásilkovny, PPL a Balíkovny.
+Google Apps Script, který automaticky vytváří úkoly v Todoist z e-mailů od Zásilkovny, PPL, Balíkovny a Alzy.
 
 ## Podporovaní dopravci
 
 - **Zásilkovna** (Packeta) - výdejní místa i Z-BOX boxy
 - **PPL** - výdejní místa (ParcelShop)
 - **Balíkovna** (Česká pošta) - boxy a výdejní místa
+- **Alza** (AlzaBox) - přímý e-shop + dopravce zároveň, odesílatel je vždy Alza
 
 ## Co skript dělá
 
@@ -235,7 +241,7 @@ curl -X GET "https://api.todoist.com/api/v1/projects" \
 
 ### 3. Povol přístup
 
-1. Spusť funkci `testZasilkovna`, `testPPL` nebo `testBalikovna`
+1. Spusť funkci `testZasilkovna`, `testPPL`, `testBalikovna` nebo `testAlza`
 2. Google tě požádá o povolení přístupu k Gmailu - povol vše
 3. Při varování "Google tuto aplikaci neověřil" klikni na "Rozšířené možnosti" → "Přejít do projektu"
 
@@ -269,6 +275,7 @@ Odkazy na e-maily v popisu úkolu používají `Session.getActiveUser().getEmail
 | `testZasilkovna` | Test parsování e-mailu Zásilkovny |
 | `testPPL` | Test parsování e-mailu PPL |
 | `testBalikovna` | Test parsování e-mailu Balíkovny |
+| `testAlza` | Test parsování e-mailu Alzy (AlzaBox) |
 
 ## Přidání dalších dopravců
 

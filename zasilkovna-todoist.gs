@@ -1,18 +1,19 @@
 /**
- * Zásilkovna & PPL & Balíkovna → Todoist
+ * Zásilkovna & PPL & Balíkovna & Alza → Todoist
  * Automaticky vytváří úkoly v Todoist z e-mailů od dopravců
  *
  * Podporovaní dopravci:
  * - Zásilkovna (výdejní místa i Z-BOX)
  * - PPL (ParcelShopy)
  * - Balíkovna (Česká pošta - boxy a výdejní místa)
+ * - Alza (AlzaBox)
  *
  * Funkce:
  * - Extrakce odesílatele, adresy, termínu vyzvednutí, čísla zásilky a PIN
  * - GPS souřadnice a odkaz na Google Maps pro navigaci
  * - Odkaz na původní e-mail v Gmailu
  *
- * @version 2.5.0
+ * @version 2.6.0
  * @author Pavel Ungr
  * @see https://github.com/pungr/zasilkovna-todoist
  */
@@ -49,6 +50,13 @@ const CARRIERS = {
     fromQuery: 'from:balikovna.cz',
     subjectKeyword: 'čeká',
     parser: parseBalikovna
+  },
+  alza: {
+    name: 'Alza',
+    icon: '📦',
+    fromQuery: 'from:alza.cz',
+    subjectKeyword: 'alzaboxu', // "Připraveno v AlzaBoxu / Obj. č. ..." – odlišuje od ostatních e-mailů Alzy (potvrzení objednávky, zpracování apod.)
+    parser: parseAlzaEmail
   }
 };
 
@@ -552,6 +560,118 @@ function parseBalikovna(message) {
 }
 
 /**
+ * Parsuje e-mail od Alzy (výdej v AlzaBoxu)
+ *
+ * Alza je zároveň e-shop i dopravce – odesílatel je vždy Alza.cz.
+ * Kód pro vyzvednutí a termín jsou ve 3sloupcové tabulce (Kód / Částka / Termín,
+ * pod tím 3 hodnoty ve stejném pořadí) – vytáhnou se pozičně, ne podle popisků.
+ */
+function parseAlzaEmail(message) {
+  const body = message.getPlainBody();
+  let htmlBody = '';
+  try {
+    htmlBody = message.getBody();
+  } catch (e) {
+    htmlBody = body;
+  }
+
+  // Číslo objednávky – z předmětu "Připraveno v AlzaBoxu / Obj. č. 1052615341"
+  let orderNumber = '';
+  const orderMatch = message.getSubject().match(/Obj\.\s*č\.\s*(\d+)/i);
+  if (orderMatch) {
+    orderNumber = orderMatch[1];
+  }
+
+  // Alza je vždy odesílatel i dopravce zároveň (na rozdíl od Zásilkovny/PPL/Balíkovny,
+  // kde odesílatel je třetí e-shop) – žádná extrakce, hodnota je pevná.
+  const sender = 'Alza.cz';
+
+  // Název AlzaBoxu (odkaz "AlzaBoxu - P4 - Krč - A. Staška") + ulice ("na adrese A. Staška 1859/34, Praha 4")
+  let address = 'Neznámé místo';
+  const boxNameMatch = htmlBody.match(/AlzaBoxu&nbsp;-&nbsp;([^<]+)<\/a>/i);
+  const streetMatch = htmlBody.match(/na\s+adrese\s*<a[^>]*>([^<]+)<\/a>/i);
+  if (boxNameMatch) {
+    const boxName = boxNameMatch[1].replace(/&nbsp;/g, ' ').trim();
+    const street = streetMatch ? streetMatch[1].replace(/&nbsp;/g, ' ').trim() : '';
+    address = street ? `AlzaBox ${boxName}, ${street}` : `AlzaBox ${boxName}`;
+  }
+
+  // Kód pro vyzvednutí + termín: tabulka "Kód pro vyzvednutí | Částka k úhradě | K vyzvednutí do"
+  // následovaná řádkem hodnot ve stejném pořadí (např. "922 460" | "Uhrazeno" | "Středy 12.8. 23:59").
+  // Vytažení pozičně (4. a 6. buňka), protože popisky i hodnoty sdílí stejnou CSS třídu.
+  let pin = '';
+  let dueDate = null;
+  const tableStart = htmlBody.indexOf('Kód&nbsp;pro&nbsp;vyzvednutí');
+  if (tableStart !== -1) {
+    const chunk = htmlBody.substring(Math.max(0, tableStart - 100), tableStart + 3200);
+    const cells = [...chunk.matchAll(/class="alzaSpacer">([^<]+)<\/td>/g)]
+      .map(function(m) { return m[1].replace(/&nbsp;/g, ' ').trim(); })
+      .filter(function(v) { return v.length > 0; });
+    if (cells.length >= 6) {
+      pin = cells[3];
+      dueDate = parseAlzaDeadline(cells[5]);
+    }
+  }
+
+  // GPS souřadnice z odkazu na Google Maps
+  let latitude = null;
+  let longitude = null;
+  const mapsMatch = htmlBody.match(/maps\.google\.com\/maps\?q=([0-9.]+),\+?([0-9.]+)/i);
+  if (mapsMatch) {
+    latitude = mapsMatch[1];
+    longitude = mapsMatch[2];
+  }
+
+  // Odkaz na detail objednávky (bez session parametru x=, ten je jednorázový a vyžaduje přihlášení)
+  const trackingUrl = orderNumber ? `https://www.alza.cz/my-account/order-details-${orderNumber}.htm` : null;
+
+  // Odkaz na e-mail v Gmailu
+  const messageId = message.getId();
+  const gmailLink = buildGmailLink(messageId);
+
+  // Datum přijetí e-mailu
+  const emailDate = message.getDate();
+  const emailDateFormatted = Utilities.formatDate(emailDate, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+
+  return {
+    sender: sender,
+    address: address,
+    dueDate: dueDate,
+    trackingUrl: trackingUrl,
+    trackingNumber: orderNumber,
+    pin: pin,
+    gmailLink: gmailLink,
+    emailDate: emailDateFormatted,
+    latitude: latitude,
+    longitude: longitude
+  };
+}
+
+/**
+ * Převede termín vyzvednutí AlzaBoxu (např. "Středy 12.8. 23:59") na ISO formát.
+ * Alza rok neuvádí – použij aktuální rok, případně příští, pokud už termín uplynul
+ * (stejná logika jako parseCzechDate).
+ */
+function parseAlzaDeadline(text) {
+  if (!text) return null;
+
+  const match = text.match(/(\d{1,2})\.(\d{1,2})\./);
+  if (!match) return null;
+
+  const day = parseInt(match[1]);
+  const month = parseInt(match[2]);
+  const now = new Date();
+  let year = now.getFullYear();
+
+  const testDate = new Date(year, month - 1, day, 23, 59);
+  if (testDate < now) {
+    year++;
+  }
+
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+/**
  * Sestaví odkaz na e-mail v Gmailu.
  * Session.getActiveUser() vyžaduje scope userinfo.email – bez něj nesmí
  * spadnout celé zpracování e-mailu (viz incident 4–7/2026), proto fallback na u/0.
@@ -1036,6 +1156,42 @@ Adresa pro vyzvednutí: box - Praha 4 AlzaBox Krč Antala Staška, Antala Stašk
 
   const result = parseBalikovna(mockMessage);
   Logger.log('Balíkovna - Výsledek parsování:');
+  Logger.log(JSON.stringify(result, null, 2));
+}
+
+/**
+ * Testovací funkce pro Alzu (AlzaBox) – HTML struktura okopírována z reálného
+ * e-mailu "Připraveno v AlzaBoxu" (třísloupcová tabulka Kód/Částka/Termín,
+ * hodnoty pod popisky ve stejném pořadí), objednávka a kód jsou fiktivní.
+ */
+function testAlza() {
+  const testHtml = `
+    <p>Vaše objednávka <a href="https://www.alza.cz/my-account/order-details-1234567890.htm?utm_source=template&utm_medium=url-link&tm_campaign=dcnbranchinfodetailhead">1234567890</a> právě dorazila do <a href="https://www.alza.cz/alzabox-155002-ps.htm">AlzaBoxu&nbsp;-&nbsp;P4 - Krč - A. Staška</a> na adrese <a href="https://maps.google.com/maps?q=50.040761,+14.440558">A. Staška 1859/34, Praha 4</a>.&nbsp;(<a href="https://maps.google.com/maps?q=50.040761,+14.440558">mapa/navigace</a>)</p>
+    <table>
+      <tr>
+        <td class="alzaSpacer">Kód&nbsp;pro&nbsp;vyzvednutí</td>
+        <td class="alzaSpacer">Částka&nbsp;k&nbsp;úhradě</td>
+        <td class="alzaSpacer">K&nbsp;vyzvednutí&nbsp;do</td>
+      </tr>
+      <tr>
+        <td class="alzaSpacer">111 222</td>
+        <td class="alzaSpacer">Uhrazeno</td>
+        <td class="alzaSpacer">Středy&nbsp;12.8.&nbsp;23:59</td>
+      </tr>
+    </table>
+  `;
+
+  const mockMessage = {
+    getPlainBody: () => '',
+    getBody: () => testHtml,
+    getFrom: () => 'sluzebnicek@alza.cz',
+    getSubject: () => 'Připraveno v AlzaBoxu / Obj. č. 1234567890',
+    getId: () => 'test-alza-id',
+    getDate: () => new Date()
+  };
+
+  const result = parseAlzaEmail(mockMessage);
+  Logger.log('Alza - Výsledek parsování:');
   Logger.log(JSON.stringify(result, null, 2));
 }
 
