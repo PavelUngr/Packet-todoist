@@ -1,6 +1,6 @@
-# Zásilkovna & PPL & Balíkovna & Alza → Todoist
+# Zásilkovna & PPL & Balíkovna & Alza & GLS → Todoist
 
-Google Apps Script that automatically creates Todoist tasks from Zásilkovna, PPL, Balíkovna and Alza (Czech parcel delivery services) emails.
+Google Apps Script that automatically creates Todoist tasks from Zásilkovna, PPL, Balíkovna, Alza and GLS (Czech parcel delivery services) emails.
 
 *[Česká verze níže](#česká-verze)*
 
@@ -12,6 +12,7 @@ Google Apps Script that automatically creates Todoist tasks from Zásilkovna, PP
 - **PPL** - parcel pickup points (ParcelShop)
 - **Balíkovna** (Czech Post) - parcel boxes and pickup points
 - **Alza** (AlzaBox) - direct e-shop + carrier, always its own sender
+- **GLS** - pickup points and Parcel Boxes. Only the "je připraven k vyzvednutí" email creates a task; the follow-up reminder ("stále čeká na vyzvednutí") is a separate Gmail thread and is deliberately ignored, otherwise it would produce a duplicate task
 
 ## What it does
 
@@ -73,7 +74,7 @@ curl -X GET "https://api.todoist.com/api/v1/projects" \
 
 ### 3. Grant permissions
 
-1. Run `testZasilkovna`, `testPPL`, `testBalikovna` or `testAlza` function
+1. Run `testZasilkovna`, `testPPL`, `testBalikovna`, `testAlza` or `testGls` function
 2. Google will ask for Gmail access - allow everything
 3. On "Google hasn't verified this app" warning, click "Advanced" → "Go to project"
 
@@ -108,6 +109,7 @@ Gmail links in task descriptions use `Session.getActiveUser().getEmail()` instea
 | `testPPL` | Test PPL email parsing |
 | `testBalikovna` | Test Balíkovna email parsing |
 | `testAlza` | Test Alza (AlzaBox) email parsing |
+| `testGls` | Test GLS email parsing |
 
 ## Adding new carriers
 
@@ -124,6 +126,11 @@ The script is designed to be easily extensible. To add a new carrier:
 - Todoist API v1 (`api.todoist.com/api/v1/`)
 
 ## Changelog
+
+### v2.7.0
+- **New:** GLS carrier support (pickup points and Parcel Boxes). The GLS email is HTML-only (no `text/plain` part), so it is converted to text (`htmlToText()`) and values are read by their labels ("Číslo balíku:", "Odesílatel:", "Výdejní místo:") via `extractLabeledValue()`, not by tags or CSS classes. Works with literal U+00A0 characters as well as `&nbsp;` entities.
+- **New:** Sender falls back to the email subject when the "Odesílatel:" label is missing. The tracking link (the "Detail balíku" button) is never invented when absent.
+- **Note:** The GLS `subjectKeyword` is `připraven`, not `vyzvednutí` – the latter also appears in the reminder email and in "GLS - Vyzvednutí balíků" (a courier picking up *your* outgoing parcel).
 
 ### v2.6.0
 - **New:** Alza (AlzaBox) carrier support. Alza is both the e-shop and the carrier, so the sender is always fixed to "Alza.cz". The pickup code and deadline sit in a 3-column/3-value HTML table with identical CSS classes for labels and values, so they're extracted positionally (4th and 6th cell) rather than by matching the label text.
@@ -172,7 +179,7 @@ MIT
 
 # Česká verze
 
-Google Apps Script, který automaticky vytváří úkoly v Todoist z e-mailů od Zásilkovny, PPL, Balíkovny a Alzy.
+Google Apps Script, který automaticky vytváří úkoly v Todoist z e-mailů od Zásilkovny, PPL, Balíkovny, Alzy a GLS.
 
 ## Podporovaní dopravci
 
@@ -180,6 +187,7 @@ Google Apps Script, který automaticky vytváří úkoly v Todoist z e-mailů od
 - **PPL** - výdejní místa (ParcelShop)
 - **Balíkovna** (Česká pošta) - boxy a výdejní místa
 - **Alza** (AlzaBox) - přímý e-shop + dopravce zároveň, odesílatel je vždy Alza
+- **GLS** - výdejní místa a Parcel Boxy. Úkol vzniká jen z e-mailu „je připraven k vyzvednutí"; následná připomínka („stále čeká na vyzvednutí") je jiné vlákno v Gmailu a záměrně se ignoruje, jinak by vznikl duplicitní úkol
 
 ## Co skript dělá
 
@@ -241,7 +249,7 @@ curl -X GET "https://api.todoist.com/api/v1/projects" \
 
 ### 3. Povol přístup
 
-1. Spusť funkci `testZasilkovna`, `testPPL`, `testBalikovna` nebo `testAlza`
+1. Spusť funkci `testZasilkovna`, `testPPL`, `testBalikovna`, `testAlza` nebo `testGls`
 2. Google tě požádá o povolení přístupu k Gmailu - povol vše
 3. Při varování "Google tuto aplikaci neověřil" klikni na "Rozšířené možnosti" → "Přejít do projektu"
 
@@ -276,6 +284,7 @@ Odkazy na e-maily v popisu úkolu používají `Session.getActiveUser().getEmail
 | `testPPL` | Test parsování e-mailu PPL |
 | `testBalikovna` | Test parsování e-mailu Balíkovny |
 | `testAlza` | Test parsování e-mailu Alzy (AlzaBox) |
+| `testGls` | Test parsování e-mailu GLS |
 
 ## Přidání dalších dopravců
 

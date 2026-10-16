@@ -1,5 +1,5 @@
 /**
- * Zásilkovna & PPL & Balíkovna & Alza → Todoist
+ * Zásilkovna & PPL & Balíkovna & Alza & GLS → Todoist
  * Automaticky vytváří úkoly v Todoist z e-mailů od dopravců
  *
  * Podporovaní dopravci:
@@ -7,13 +7,14 @@
  * - PPL (ParcelShopy)
  * - Balíkovna (Česká pošta - boxy a výdejní místa)
  * - Alza (AlzaBox)
+ * - GLS (výdejní místa a Parcel Boxy)
  *
  * Funkce:
  * - Extrakce odesílatele, adresy, termínu vyzvednutí, čísla zásilky a PIN
  * - GPS souřadnice a odkaz na Google Maps pro navigaci
  * - Odkaz na původní e-mail v Gmailu
  *
- * @version 2.6.0
+ * @version 2.7.0
  * @author Pavel Ungr
  * @see https://github.com/pungr/zasilkovna-todoist
  */
@@ -57,6 +58,15 @@ const CARRIERS = {
     fromQuery: 'from:alza.cz',
     subjectKeyword: 'alzaboxu', // "Připraveno v AlzaBoxu / Obj. č. ..." – odlišuje od ostatních e-mailů Alzy (potvrzení objednávky, zpracování apod.)
     parser: parseAlzaEmail
+  },
+  gls: {
+    name: 'GLS',
+    icon: '📦',
+    fromQuery: 'from:gls-czech.com',
+    // "GLS - Váš balík od X je připraven k vyzvednutí". Záměrně NE 'vyzvednutí': to je i v připomínce
+    // "stále čeká na vyzvednutí" (jiné vlákno → duplicitní úkol) a v "GLS - Vyzvednutí balíků" (kurýr bere VÁŠ balík).
+    subjectKeyword: 'připraven',
+    parser: parseGlsEmail
   }
 };
 
@@ -672,6 +682,138 @@ function parseAlzaDeadline(text) {
 }
 
 /**
+ * Parsuje e-mail od GLS "Váš balík od X je připraven k vyzvednutí"
+ * (balík dorazil na výdejní místo nebo do GLS Parcel Boxu).
+ *
+ * E-mail má jen text/html část (žádný text/plain), štítky a hodnoty jsou v samostatných
+ * <div> ("Číslo balíku:" / "Odesílatel:" / "Výdejní místo:"). Proto se HTML nejdřív
+ * převede na text a hodnoty se čtou podle štítků, ne podle značek nebo CSS tříd.
+ */
+function parseGlsEmail(message) {
+  const subject = message.getSubject() || '';
+  let htmlBody = '';
+  try {
+    htmlBody = message.getBody();
+  } catch (e) {
+    htmlBody = '';
+  }
+  const text = htmlBody ? htmlToText(htmlBody) : htmlToText(message.getPlainBody() || '');
+
+  // Číslo balíku ("Číslo balíku:" / "5000000001")
+  const trackingNumber = extractLabeledValue(text, 'Číslo balíku');
+
+  // Odesílatel (e-shop) – záloha z předmětu "GLS - Váš balík od IPRICE - BESTBERG je připraven k vyzvednutí".
+  // Když není ani tam, zůstane null a buildTaskPayload použije celý předmět.
+  let sender = extractLabeledValue(text, 'Odesílatel') || null;
+  if (!sender) {
+    const subjectSender = subject.match(/balík\s+od\s+(.+?)\s+je\s+připraven/i);
+    if (subjectSender) {
+      sender = subjectSender[1].trim();
+    }
+  }
+
+  // Výdejní místo – víc řádků ("GLS Parcel Box," / "Budějovická (u vchodu do Metra) 1667," / "14000, Praha 4")
+  const address = extractLabeledValue(text, 'Výdejní místo') || 'Neznámé místo';
+
+  // PIN – ve větě "použijte PIN kód 012345" i jako "PIN kód: 012345"; řetězec kvůli vedoucí nule
+  let pin = '';
+  const pinMatch = text.match(/PIN\s*kód:?\s*(\d{4,8})/i);
+  if (pinMatch) {
+    pin = pinMatch[1];
+  }
+
+  // Termín vyzvednutí – "nejpozději dne 16. 10. 2026" (s rokem, na rozdíl od Alzy)
+  let dueDate = null;
+  const dueMatch = text.match(/nejpozději\s+dne\s+(\d{1,2})\.\s*(\d{1,2})\.\s*(\d{4})/i);
+  if (dueMatch) {
+    dueDate = `${dueMatch[3]}-${String(dueMatch[2]).padStart(2, '0')}-${String(dueMatch[1]).padStart(2, '0')}`;
+  }
+
+  // Odkaz na sledování = tlačítko "Detail balíku" (krátká URL gls-balik.cz/…).
+  // Když tlačítko chybí, odkaz se nevymýšlí – úkol dostane jen prostý název.
+  let trackingUrl = null;
+  for (const m of htmlBody.matchAll(/<a\b[^>]*?\bhref="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)) {
+    if (/Detail\s+balíku/i.test(htmlToText(m[2]))) {
+      trackingUrl = m[1].replace(/&amp;/g, '&');
+      break;
+    }
+  }
+
+  // Odkaz na e-mail v Gmailu
+  const messageId = message.getId();
+  const gmailLink = buildGmailLink(messageId);
+
+  // Datum přijetí e-mailu
+  const emailDate = message.getDate();
+  const emailDateFormatted = Utilities.formatDate(emailDate, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+
+  return {
+    sender: sender,
+    address: address,
+    dueDate: dueDate,
+    trackingUrl: trackingUrl,
+    trackingNumber: trackingNumber,
+    pin: pin,
+    gmailLink: gmailLink,
+    emailDate: emailDateFormatted,
+    latitude: null, // GLS e-mail neobsahuje mapový odkaz
+    longitude: null
+  };
+}
+
+/**
+ * Převede HTML e-mailu na text po řádcích: bloky a <br> dělí řádky, značky se zahodí,
+ * entity se dekódují. Zvládá U+00A0 jako entitu i jako doslovný znak a zahazuje
+ * neviditelné znaky z preheaderu (U+034F, U+200B–200D, U+00AD).
+ */
+function htmlToText(html) {
+  return html
+    .replace(/<(style|script|head)\b[\s\S]*?<\/\1>/gi, '')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|tr|td|th|li|table|h[1-6])>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&#(\d+);/g, function(m, code) { return String.fromCharCode(parseInt(code, 10)); })
+    .replace(/&#x([0-9a-f]+);/gi, function(m, code) { return String.fromCharCode(parseInt(code, 16)); })
+    .replace(/&amp;/gi, '&') // až nakonec, ať se nedekóduje dvakrát
+    .replace(/[͏​-‍­﻿]/g, '')
+    .replace(/[ \t ]+/g, ' ')
+    .split('\n')
+    .map(function(line) { return line.trim(); })
+    .filter(function(line) { return line.length > 0; })
+    .join('\n');
+}
+
+/**
+ * Z textu po řádcích (výstup htmlToText) vytáhne hodnotu za štítkem, např. "Číslo balíku:".
+ * Hodnota je buď na stejném řádku za dvojtečkou, nebo na řádcích pod štítkem – čte se
+ * do dalšího řádku končícího dvojtečkou (další štítek), nejvýš 4 řádky. Vrací '' když štítek chybí.
+ */
+function extractLabeledValue(text, label) {
+  const lines = text.split('\n');
+  const prefix = (label + ':').toLowerCase();
+  for (let i = 0; i < lines.length; i++) {
+    if (!lines[i].toLowerCase().startsWith(prefix)) continue;
+
+    const inline = lines[i].slice(prefix.length).trim();
+    if (inline) return inline;
+
+    const values = [];
+    for (let j = i + 1; j < lines.length && values.length < 4; j++) {
+      if (/:$/.test(lines[j])) break;
+      values.push(lines[j]);
+    }
+    return values.join(' ').replace(/\s+/g, ' ').trim();
+  }
+  return '';
+}
+
+/**
  * Sestaví odkaz na e-mail v Gmailu.
  * Session.getActiveUser() vyžaduje scope userinfo.email – bez něj nesmí
  * spadnout celé zpracování e-mailu (viz incident 4–7/2026), proto fallback na u/0.
@@ -1193,6 +1335,53 @@ function testAlza() {
   const result = parseAlzaEmail(mockMessage);
   Logger.log('Alza - Výsledek parsování:');
   Logger.log(JSON.stringify(result, null, 2));
+}
+
+/**
+ * Testovací funkce pro GLS – HTML struktura zjednodušená z reálného originálu e-mailu
+ * "Váš balík od … je připraven k vyzvednutí" (13. 10. 2026): jen text/html, mezery jako
+ * doslovné U+00A0, preheader s neviditelnými znaky. Odesílatel, PIN a čísla jsou fiktivní.
+ * Druhé volání pokrývá záložní větev (chybí "Odesílatel:" → odesílatel z předmětu).
+ */
+function testGls() {
+  const subject = 'GLS - Váš balík od TESTSHOP - EXAMPLE je připraven k vyzvednutí';
+  const testHtml = `
+    <html><head><style>.x { color: red; }</style></head><body>
+    <div><strong>Balík připraven k vyzvednutí</strong><br><span> ͏‌­ </span></div>
+    <table><tr><td> </td><td><div>Dobrý den,</div>
+      <div>váš balík jsme právě doručili do výdejního místa GLS. Balík si můžete vyzvednout nejpozději dne <strong>16. 10. 2026</strong>. Pro vydání balíku použijte <strong>PIN kód 123456</strong>.</div>
+    </td></tr></table>
+    <table><tr><td> </td><td><strong>PIN kód: <span>123456</span></strong><div>Balík si můžete vyzvednout nejpozději dne <strong>16. 10. 2026</strong>.</div></td></tr></table>
+    <table><tr>
+      <td><div>Číslo balíku:</div><div><strong>5000000001</strong></div></td>
+      <td><div>Odesílatel:</div><div><strong>TESTSHOP - EXAMPLE</strong></div></td>
+      <td><div>Výdejní místo:</div><div><strong>GLS Parcel Box,<br>Budějovická (u vchodu do Metra) 1667,<br>14000, Praha 4</strong></div>
+          <div>Bližší informace o balíku a výdejním místě GLS:</div>
+          <div><a href="https://gls-balik.cz/AbCdEfG" target="_blank"><span>Detail balíku</span> </a></div></td>
+    </tr></table>
+    <div>Nenašli jste řešení? Kontaktujte <a href="mailto:info@gls-czech.com">info@gls-czech.com</a></div>
+    </body></html>
+  `;
+
+  const buildMock = function(html, mockSubject) {
+    return {
+      getPlainBody: () => '',
+      getBody: () => html,
+      getFrom: () => 'noreply@gls-czech.com',
+      getSubject: () => mockSubject,
+      getId: () => 'test-gls-id',
+      getDate: () => new Date()
+    };
+  };
+
+  Logger.log('GLS - Výsledek parsování:');
+  Logger.log(JSON.stringify(parseGlsEmail(buildMock(testHtml, subject)), null, 2));
+
+  // Jiné jméno v předmětu než v HTML, ať je vidět, že sender přišel z předmětu
+  const withoutSender = testHtml.replace(/<div>Odesílatel:<\/div><div><strong>[^<]*<\/strong><\/div>/, '');
+  const subjectOnly = 'GLS - Váš balík od ZE PŘEDMĚTU je připraven k vyzvednutí';
+  const fallbackResult = parseGlsEmail(buildMock(withoutSender, subjectOnly));
+  Logger.log(`GLS - bez štítku Odesílatel, sender má být "ZE PŘEDMĚTU": ${fallbackResult.sender}`);
 }
 
 /**
