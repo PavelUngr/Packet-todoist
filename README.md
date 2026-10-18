@@ -52,19 +52,26 @@ When you receive an email notifying that your parcel is ready for pickup, the sc
 
 ### 2. Configure
 
-Fill in the `CONFIG` section:
+**Todoist API token: never put it into the code or commit it.** Store it as a script property:
+
+1. In the Apps Script editor open **Project Settings** (gear icon on the left)
+2. Under **Script Properties** click **Edit script properties** → **Add script property**
+3. Name: `TODOIST_API_TOKEN`, value: your token → **Save script properties**
+
+The script reads it at runtime (`getTodoistToken()`) and stops with a clear message when it is missing. Repeat this in every project (Google account) you install the script in.
+
+**How to get Todoist API token:**
+- Todoist → Settings → Integrations → Developer
+
+Then fill in the `CONFIG` section (project ID and options only, no secrets):
 
 ```javascript
 const CONFIG = {
-  TODOIST_API_TOKEN: 'your-api-token',
   TODOIST_PROJECT_ID: 'your-project-id',
   MAX_EMAIL_AGE_DAYS: 7, // emails older than this are labeled without creating a task
   // ...
 };
 ```
-
-**How to get Todoist API token:**
-- Todoist → Settings → Integrations → API token (Developer)
 
 **How to get Project ID:**
 ```bash
@@ -77,6 +84,7 @@ curl -X GET "https://api.todoist.com/api/v1/projects" \
 1. Run `testZasilkovna`, `testPPL`, `testBalikovna`, `testAlza` or `testGls` function
 2. Google will ask for Gmail access - allow everything
 3. On "Google hasn't verified this app" warning, click "Advanced" → "Go to project"
+4. Run `testTodoistPripojeni`: it only reads (`GET /api/v1/projects`) and logs the HTTP status (expected `200`) and the number of projects. Nothing is created and the token is never logged.
 
 ### 4. Mark existing emails
 
@@ -92,7 +100,7 @@ The script will run every 15 minutes.
 
 ## Multi-account support
 
-The script works on any Gmail account. You can install it on multiple Google accounts and they will all create tasks in the same Todoist project (as long as they share the same API token and project ID).
+The script works on any Gmail account. You can install it on multiple Google accounts and they will all create tasks in the same Todoist project (as long as they share the same API token and project ID; the token is set as a script property in each project).
 
 Gmail links in task descriptions use `Session.getActiveUser().getEmail()` instead of hardcoded account index, so they work correctly regardless of which account the script runs on.
 
@@ -110,6 +118,7 @@ Gmail links in task descriptions use `Session.getActiveUser().getEmail()` instea
 | `testBalikovna` | Test Balíkovna email parsing |
 | `testAlza` | Test Alza (AlzaBox) email parsing |
 | `testGls` | Test GLS email parsing |
+| `testTodoistPripojeni` | Read-only Todoist connection check (HTTP status + number of projects) |
 
 ## Adding new carriers
 
@@ -126,6 +135,12 @@ The script is designed to be easily extensible. To add a new carrier:
 - Todoist API v1 (`api.todoist.com/api/v1/`)
 
 ## Changelog
+
+### v2.8.0
+- **Security / breaking change for upgraders:** the Todoist API token is no longer part of the code. It is read from the script property `TODOIST_API_TOKEN` (Project Settings → Script Properties) via `getTodoistToken()` on every call. The `TODOIST_API_TOKEN` field in `CONFIG` is gone. **When upgrading, set the property first, otherwise the script stops with an error message.**
+- **New:** fail-fast – a missing token fails the whole run immediately (visible failure + Google notification) instead of being logged per email and finishing as "Completed".
+- **New:** `testTodoistPripojeni()` – read-only connection check (HTTP status + number of projects), never logs the token.
+- **Why:** a token committed into a public repository cannot be recalled by a later commit; the only remedy is to revoke it at the issuer.
 
 ### v2.7.0
 - **New:** GLS carrier support (pickup points and Parcel Boxes). The GLS email is HTML-only (no `text/plain` part), so it is converted to text (`htmlToText()`) and values are read by their labels ("Číslo balíku:", "Odesílatel:", "Výdejní místo:") via `extractLabeledValue()`, not by tags or CSS classes. Works with literal U+00A0 characters as well as `&nbsp;` entities.
@@ -227,19 +242,26 @@ Když ti přijde e-mail s oznámením, že je zásilka připravena k vyzvednutí
 
 ### 2. Nastav konfiguraci
 
-V sekci `CONFIG` vyplň:
+**Todoist API token: nikdy ho nedávej do kódu ani do commitů.** Ulož ho jako vlastnost skriptu:
+
+1. V editoru Apps Script otevři **Nastavení projektu** (ozubené kolečko vlevo)
+2. V sekci **Vlastnosti skriptu** klikni na **Upravit vlastnosti skriptu** → **Přidat vlastnost skriptu**
+3. Název: `TODOIST_API_TOKEN`, hodnota: tvůj token → **Uložit vlastnosti skriptu**
+
+Skript ho čte za běhu (`getTodoistToken()`) a když chybí, skončí srozumitelnou chybou. Postup zopakuj v každém projektu (Google účtu), kam skript instaluješ.
+
+**Jak získat Todoist API token:**
+- Todoist → Nastavení → Integrace → Vývojář
+
+Potom v sekci `CONFIG` vyplň jen ID projektu a volby (žádná tajemství):
 
 ```javascript
 const CONFIG = {
-  TODOIST_API_TOKEN: 'tvuj-api-token',
   TODOIST_PROJECT_ID: 'id-projektu',
   MAX_EMAIL_AGE_DAYS: 7, // starší e-maily se jen označí, úkol nevznikne (ochrana po výpadku)
   // ...
 };
 ```
-
-**Jak získat Todoist API token:**
-- Todoist → Nastavení → Integrace → API token (Developer)
 
 **Jak získat Project ID:**
 ```bash
@@ -252,6 +274,7 @@ curl -X GET "https://api.todoist.com/api/v1/projects" \
 1. Spusť funkci `testZasilkovna`, `testPPL`, `testBalikovna`, `testAlza` nebo `testGls`
 2. Google tě požádá o povolení přístupu k Gmailu - povol vše
 3. Při varování "Google tuto aplikaci neověřil" klikni na "Rozšířené možnosti" → "Přejít do projektu"
+4. Spusť funkci `testTodoistPripojeni`: jen čte (`GET /api/v1/projects`) a zapíše stavový kód (očekává se `200`) a počet projektů. Nic nezakládá a token se nikdy nezapisuje do protokolu.
 
 ### 4. Označ existující e-maily
 
@@ -267,7 +290,7 @@ Skript se bude spouštět každých 15 minut.
 
 ## Podpora více účtů
 
-Skript funguje na jakémkoli Gmail účtu. Můžete ho nainstalovat na více Google účtů a všechny budou vytvářet úkoly do stejného Todoist projektu (pokud sdílí stejný API token a project ID).
+Skript funguje na jakémkoli Gmail účtu. Můžete ho nainstalovat na více Google účtů a všechny budou vytvářet úkoly do stejného Todoist projektu (pokud sdílí stejný API token a project ID; token se nastavuje jako vlastnost skriptu v každém projektu zvlášť).
 
 Odkazy na e-maily v popisu úkolu používají `Session.getActiveUser().getEmail()` místo pevně zadaného indexu účtu, takže fungují správně bez ohledu na to, na kterém účtu skript běží.
 
@@ -285,6 +308,7 @@ Odkazy na e-maily v popisu úkolu používají `Session.getActiveUser().getEmail
 | `testBalikovna` | Test parsování e-mailu Balíkovny |
 | `testAlza` | Test parsování e-mailu Alzy (AlzaBox) |
 | `testGls` | Test parsování e-mailu GLS |
+| `testTodoistPripojeni` | Jen čtecí kontrola připojení k Todoistu (stavový kód + počet projektů) |
 
 ## Přidání dalších dopravců
 

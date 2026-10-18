@@ -14,14 +14,14 @@
  * - GPS souřadnice a odkaz na Google Maps pro navigaci
  * - Odkaz na původní e-mail v Gmailu
  *
- * @version 2.7.0
+ * @version 2.8.0
  * @author Pavel Ungr
  * @see https://github.com/pungr/zasilkovna-todoist
  */
 
 // ============ KONFIGURACE ============
 const CONFIG = {
-  TODOIST_API_TOKEN: 'your-todoist-api-token',
+  // TODOIST_API_TOKEN není v kódu: je ve vlastnostech skriptu (Nastavení projektu → Vlastnosti skriptu) a čte se přes getTodoistToken().
   TODOIST_PROJECT_ID: 'your-project-id', // cílový projekt pro úkoly
   TODOIST_LABELS: ['⏲️Rychlovka'], // Štítek úkolu; automat nikdy nezakládá p1 ani ⚡ URGENT ⚡
   GMAIL_LABEL_PROCESSED: 'Parcel-Todoist', // Label pro zpracované e-maily
@@ -86,6 +86,11 @@ function dryRunAllCarriers() {
 }
 
 function runAllCarriers(dryRun) {
+  // Fail-fast: chybějící vlastnost TODOIST_API_TOKEN shodí celý běh dřív, než se sáhne na e-maily.
+  // Selhání je pak vidět (stav "Selhalo" + upozornění od Googlu). Chyby po jednotlivých e-mailech
+  // se jinak jen zalogují a běh skončí jako "Dokončeno" (viz incident 4–7/2026).
+  getTodoistToken();
+
   const stats = { processed: 0, created: 0, skippedDedup: 0, skippedOld: 0, errors: [] };
   const dedupKeys = getExistingDedupKeys();
 
@@ -958,7 +963,7 @@ function createTodoistTask(payload) {
   const options = {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${CONFIG.TODOIST_API_TOKEN}`,
+      'Authorization': `Bearer ${getTodoistToken()}`,
       'Content-Type': 'application/json'
     },
     payload: JSON.stringify(payload),
@@ -991,7 +996,7 @@ function getExistingDedupKeys() {
       }
       const response = UrlFetchApp.fetch(url, {
         method: 'GET',
-        headers: { 'Authorization': `Bearer ${CONFIG.TODOIST_API_TOKEN}` },
+        headers: { 'Authorization': `Bearer ${getTodoistToken()}` },
         muteHttpExceptions: true
       });
       const code = response.getResponseCode();
@@ -1446,4 +1451,40 @@ function clearProcessedIds() {
   const props = PropertiesService.getScriptProperties();
   props.deleteProperty('processedMessageIds');
   Logger.log('Seznam zpracovaných ID vymazán.');
+}
+
+/**
+ * Todoist API token z vlastností skriptu (Nastavení projektu → Vlastnosti skriptu).
+ * Čte se při každém volání, ne jako konstanta při startu. Token nepatří do kódu ani do repozitáře.
+ */
+function getTodoistToken() {
+  const token = PropertiesService.getScriptProperties().getProperty('TODOIST_API_TOKEN');
+  if (!token) {
+    throw new Error(
+      'Chybí vlastnost skriptu TODOIST_API_TOKEN. Nastavení: Apps Script editor → Nastavení projektu ' +
+      '(ozubené kolečko vlevo) → Vlastnosti skriptu → Upravit vlastnosti skriptu → Přidat vlastnost skriptu ' +
+      '→ název TODOIST_API_TOKEN, hodnota = Todoist API token (Todoist → Nastavení → Integrace → Vývojář).'
+    );
+  }
+  return token.trim();
+}
+
+/**
+ * Test připojení k Todoistu: jen čte (GET /api/v1/projects), nic nezakládá.
+ * Do protokolu zapíše stavový kód a počet projektů, token ani odpověď nikdy.
+ */
+function testTodoistPripojeni() {
+  const response = UrlFetchApp.fetch('https://api.todoist.com/api/v1/projects', {
+    method: 'GET',
+    headers: { 'Authorization': `Bearer ${getTodoistToken()}` },
+    muteHttpExceptions: true
+  });
+  const code = response.getResponseCode();
+  let count = 'n/a';
+  if (code >= 200 && code < 300) {
+    const data = JSON.parse(response.getContentText());
+    const projects = Array.isArray(data) ? data : (data.results || []);
+    count = projects.length + (data.next_cursor ? ' (+ další stránka)' : '');
+  }
+  Logger.log(`Todoist GET /api/v1/projects – stavový kód: ${code} | počet projektů: ${count}`);
 }
